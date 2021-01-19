@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -122,6 +122,30 @@ namespace MailKit.Search {
 		}
 
 		/// <summary>
+		/// Match messages with the specified annotation.
+		/// </summary>
+		/// <remarks>
+		/// <para>Matches messages with the specified annotation.</para>
+		/// <note type="warning">This feature is not supported by all IMAP servers.</note>
+		/// </remarks>
+		/// <param name="entry">The annotation entry.</param>
+		/// <param name="attribute">The annotation attribute.</param>
+		/// <param name="value">The annotation attribute value.</param>
+		/// <returns>A <see cref="AnnotationSearchQuery"/>.</returns>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="entry"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="attribute"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="attribute"/> is not a valid attribute for searching.
+		/// </exception>
+		public static AnnotationSearchQuery AnnotationsContain (AnnotationEntry entry, AnnotationAttribute attribute, string value)
+		{
+			return new AnnotationSearchQuery (entry, attribute, value);
+		}
+
+		/// <summary>
 		/// Match messages with the <see cref="MessageFlags.Answered"/> flag set.
 		/// </summary>
 		/// <remarks>
@@ -190,7 +214,7 @@ namespace MailKit.Search {
 		/// Match messages that have mod-sequence values greater than or equal to the specified mod-sequence value.
 		/// </summary>
 		/// <remarks>
-		///  Matches messages that have mod-sequence values greater than or equal to the specified mod-sequence value.
+		/// Matches messages that have mod-sequence values greater than or equal to the specified mod-sequence value.
 		/// </remarks>
 		/// <returns>A <see cref="SearchQuery"/>.</returns>
 		/// <param name="modseq">The mod-sequence value.</param>
@@ -211,7 +235,8 @@ namespace MailKit.Search {
 		/// Match messages that were delivered after the specified date.
 		/// </summary>
 		/// <remarks>
-		/// Matches messages that were delivered after the specified date.
+		/// <para>Matches messages that were delivered after the specified date.</para>
+		/// <para>The resolution of this search query does not include the time.</para>
 		/// </remarks>
 		/// <returns>A <see cref="DateSearchQuery"/>.</returns>
 		/// <param name="date">The date.</param>
@@ -224,7 +249,8 @@ namespace MailKit.Search {
 		/// Match messages that were delivered before the specified date.
 		/// </summary>
 		/// <remarks>
-		/// Matches messages that were delivered before the specified date.
+		/// <para>Matches messages that were delivered before the specified date.</para>
+		/// <para>The resolution of this search query does not include the time.</para>
 		/// </remarks>
 		/// <returns>A <see cref="DateSearchQuery"/>.</returns>
 		/// <param name="date">The date.</param>
@@ -237,7 +263,8 @@ namespace MailKit.Search {
 		/// Match messages that were delivered on the specified date.
 		/// </summary>
 		/// <remarks>
-		/// Matches messages that were delivered on the specified date.
+		/// <para>Matches messages that were delivered on the specified date.</para>
+		/// <para>The resolution of this search query does not include the time.</para>
 		/// </remarks>
 		/// <returns>A <see cref="DateSearchQuery"/>.</returns>
 		/// <param name="date">The date.</param>
@@ -260,22 +287,17 @@ namespace MailKit.Search {
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="flag"/> is empty.
 		/// </exception>
+		[Obsolete ("Use NotKeyword() instead.")]
 		public static TextSearchQuery DoesNotHaveCustomFlag (string flag)
 		{
-			if (flag == null)
-				throw new ArgumentNullException (nameof (flag));
-
-			if (flag.Length == 0)
-				throw new ArgumentException ("Cannot search for an empty string.");
-
-			return new TextSearchQuery (SearchTerm.NotKeyword, flag);
+			return NotKeyword (flag);
 		}
 
 		/// <summary>
-		/// Match messages that do not have the specified custom flags set.
+		/// Match messages that do not have any of the specified custom flags set.
 		/// </summary>
 		/// <remarks>
-		/// Matches messages that do not have the specified custom flags set.
+		/// Matches messages that do not have any of the specified custom flags set.
 		/// </remarks>
 		/// <returns>A <see cref="SearchQuery"/>.</returns>
 		/// <param name="flags">The custom flags.</param>
@@ -287,62 +309,27 @@ namespace MailKit.Search {
 		/// <para>-or-</para>
 		/// <para>No custom flags were given.</para>
 		/// </exception>
+		[Obsolete ("Use NotKeywords() instead.")]
 		public static SearchQuery DoesNotHaveCustomFlags (IEnumerable<string> flags)
 		{
-			if (flags == null)
-				throw new ArgumentNullException (nameof (flags));
-
-			var list = new List<SearchQuery> ();
-
-			foreach (var flag in flags)
-				list.Add (new TextSearchQuery (SearchTerm.NotKeyword, flag));
-
-			if (list.Count == 0)
-				throw new ArgumentException ("No flags specified.", nameof (flags));
-
-			var query = list[0];
-			for (int i = 1; i < list.Count; i++)
-				query = query.And (list[i]);
-
-			return query;
+			return NotKeywords (flags);
 		}
 
 		/// <summary>
-		/// Match messages that do not have the specified flags set.
+		/// Match messages that do not have any of the specified flags set.
 		/// </summary>
 		/// <remarks>
-		/// Matches messages that do not have the specified flags set.
+		/// Matches messages that do not have any of the specified flags set.
 		/// </remarks>
 		/// <returns>A <see cref="SearchQuery"/>.</returns>
 		/// <param name="flags">The message flags.</param>
 		/// <exception cref="System.ArgumentException">
-		/// <paramref name="flags"/> does not contain any of the valie flag values.
+		/// <paramref name="flags"/> does not specify any valid message flags.
 		/// </exception>
+		[Obsolete ("Use NotFlags() instead.")]
 		public static SearchQuery DoesNotHaveFlags (MessageFlags flags)
 		{
-			var list = new List<SearchQuery> ();
-
-			if ((flags & MessageFlags.Seen) != 0)
-				list.Add (NotSeen);
-			if ((flags & MessageFlags.Answered) != 0)
-				list.Add (NotAnswered);
-			if ((flags & MessageFlags.Flagged) != 0)
-				list.Add (NotFlagged);
-			if ((flags & MessageFlags.Deleted) != 0)
-				list.Add (NotDeleted);
-			if ((flags & MessageFlags.Draft) != 0)
-				list.Add (NotDraft);
-			if ((flags & MessageFlags.Recent) != 0)
-				list.Add (NotRecent);
-
-			if (list.Count == 0)
-				throw new ArgumentException ("No flags specified.", nameof (flags));
-
-			var query = list[0];
-			for (int i = 1; i < list.Count; i++)
-				query = query.And (list[i]);
-
-			return query;
+			return NotFlags (flags);
 		}
 
 		/// <summary>
@@ -364,6 +351,19 @@ namespace MailKit.Search {
 		public static SearchQuery Filter (string name)
 		{
 			return new FilterSearchQuery (name);
+		}
+
+		/// <summary>
+		/// Match messages using a saved search filter.
+		/// </summary>
+		/// <remarks>
+		/// Matches messages using a saved search filter.
+		/// </remarks>
+		/// <returns>A <see cref="FilterSearchQuery"/>.</returns>
+		/// <param name="filter">The name of the saved search.</param>
+		public static SearchQuery Filter (MetadataTag filter)
+		{
+			return new FilterSearchQuery (filter);
 		}
 
 		/// <summary>
@@ -427,15 +427,10 @@ namespace MailKit.Search {
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="flag"/> is empty.
 		/// </exception>
+		[Obsolete ("Use HasKeyword() instead.")]
 		public static TextSearchQuery HasCustomFlag (string flag)
 		{
-			if (flag == null)
-				throw new ArgumentNullException (nameof (flag));
-
-			if (flag.Length == 0)
-				throw new ArgumentException ("Cannot search for an empty string.");
-
-			return new TextSearchQuery (SearchTerm.Keyword, flag);
+			return HasKeyword (flag);
 		}
 
 		/// <summary>
@@ -454,24 +449,10 @@ namespace MailKit.Search {
 		/// <para>-or-</para>
 		/// <para>No custom flags were given.</para>
 		/// </exception>
+		[Obsolete ("Use HasKeywords() instead.")]
 		public static SearchQuery HasCustomFlags (IEnumerable<string> flags)
 		{
-			if (flags == null)
-				throw new ArgumentNullException (nameof (flags));
-
-			var list = new List<SearchQuery> ();
-
-			foreach (var flag in flags)
-				list.Add (new TextSearchQuery (SearchTerm.Keyword, flag));
-
-			if (list.Count == 0)
-				throw new ArgumentException ("No flags specified.", nameof (flags));
-
-			var query = list[0];
-			for (int i = 1; i < list.Count; i++)
-				query = query.And (list[i]);
-
-			return query;
+			return HasKeywords (flags);
 		}
 
 		/// <summary>
@@ -483,7 +464,7 @@ namespace MailKit.Search {
 		/// <returns>A <see cref="SearchQuery"/>.</returns>
 		/// <param name="flags">The message flags.</param>
 		/// <exception cref="System.ArgumentException">
-		/// <paramref name="flags"/> does not contain any of the valie flag values.
+		/// <paramref name="flags"/> does not specify any valid message flags.
 		/// </exception>
 		public static SearchQuery HasFlags (MessageFlags flags)
 		{
@@ -504,6 +485,178 @@ namespace MailKit.Search {
 
 			if (list.Count == 0)
 				throw new ArgumentException ("No flags specified.", nameof (flags));
+
+			var query = list[0];
+			for (int i = 1; i < list.Count; i++)
+				query = query.And (list[i]);
+
+			return query;
+		}
+
+		/// <summary>
+		/// Match messages that do not have any of the specified flags set.
+		/// </summary>
+		/// <remarks>
+		/// Matches messages that do not have any of the specified flags set.
+		/// </remarks>
+		/// <returns>A <see cref="SearchQuery"/>.</returns>
+		/// <param name="flags">The message flags.</param>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="flags"/> does not specify any valid message flags.
+		/// </exception>
+		public static SearchQuery NotFlags (MessageFlags flags)
+		{
+			var list = new List<SearchQuery> ();
+
+			if ((flags & MessageFlags.Seen) != 0)
+				list.Add (NotSeen);
+			if ((flags & MessageFlags.Answered) != 0)
+				list.Add (NotAnswered);
+			if ((flags & MessageFlags.Flagged) != 0)
+				list.Add (NotFlagged);
+			if ((flags & MessageFlags.Deleted) != 0)
+				list.Add (NotDeleted);
+			if ((flags & MessageFlags.Draft) != 0)
+				list.Add (NotDraft);
+			if ((flags & MessageFlags.Recent) != 0)
+				list.Add (NotRecent);
+
+			if (list.Count == 0)
+				throw new ArgumentException ("No flags specified.", nameof (flags));
+
+			var query = list[0];
+			for (int i = 1; i < list.Count; i++)
+				query = query.And (list[i]);
+
+			return query;
+		}
+
+		/// <summary>
+		/// Match messages that have the specified keyword set.
+		/// </summary>
+		/// <remarks>
+		/// <para>Matches messages that have the specified keyword set.</para>
+		/// <note type="info">A keyword is a user-defined message flag.</note>
+		/// </remarks>
+		/// <returns>A <see cref="TextSearchQuery"/>.</returns>
+		/// <param name="keyword">The keyword.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="keyword"/> is <c>null</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="keyword"/> is empty.
+		/// </exception>
+		public static TextSearchQuery HasKeyword (string keyword)
+		{
+			if (keyword == null)
+				throw new ArgumentNullException (nameof (keyword));
+
+			if (keyword.Length == 0)
+				throw new ArgumentException ("The keyword cannot be an empty string.", nameof (keyword));
+
+			return new TextSearchQuery (SearchTerm.Keyword, keyword);
+		}
+
+		/// <summary>
+		/// Match messages that have all of the specified keywords set.
+		/// </summary>
+		/// <remarks>
+		/// <para>Matches messages that have all of the specified keywords set.</para>
+		/// <note type="info">A keyword is a user-defined message flag.</note>
+		/// </remarks>
+		/// <returns>A <see cref="SearchQuery"/>.</returns>
+		/// <param name="keywords">The keywords.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="keywords"/> is <c>null</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <para>One or more of the <paramref name="keywords"/> is <c>null</c> or empty.</para>
+		/// <para>-or-</para>
+		/// <para>No keywords were given.</para>
+		/// </exception>
+		public static SearchQuery HasKeywords (IEnumerable<string> keywords)
+		{
+			if (keywords == null)
+				throw new ArgumentNullException (nameof (keywords));
+
+			var list = new List<SearchQuery> ();
+
+			foreach (var keyword in keywords) {
+				if (string.IsNullOrEmpty (keyword))
+					throw new ArgumentException ("Cannot search for null or empty keywords.", nameof (keywords));
+
+				list.Add (new TextSearchQuery (SearchTerm.Keyword, keyword));
+			}
+
+			if (list.Count == 0)
+				throw new ArgumentException ("No keywords specified.", nameof (keywords));
+
+			var query = list[0];
+			for (int i = 1; i < list.Count; i++)
+				query = query.And (list[i]);
+
+			return query;
+		}
+
+		/// <summary>
+		/// Match messages that do not have the specified keyword set.
+		/// </summary>
+		/// <remarks>
+		/// <para>Matches messages that do not have the specified keyword set.</para>
+		/// <note type="info">A keyword is a user-defined message flag.</note>
+		/// </remarks>
+		/// <returns>A <see cref="TextSearchQuery"/>.</returns>
+		/// <param name="keyword">The keyword.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="keyword"/> is <c>null</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="keyword"/> is empty.
+		/// </exception>
+		public static TextSearchQuery NotKeyword (string keyword)
+		{
+			if (keyword == null)
+				throw new ArgumentNullException (nameof (keyword));
+
+			if (keyword.Length == 0)
+				throw new ArgumentException ("The keyword cannot be an empty string.", nameof (keyword));
+
+			return new TextSearchQuery (SearchTerm.NotKeyword, keyword);
+		}
+
+		/// <summary>
+		/// Match messages that do not have any of the specified keywords set.
+		/// </summary>
+		/// <remarks>
+		/// <para>Matches messages that do not have any of the specified keywords set.</para>
+		/// <note type="info">A keyword is a user-defined message flag.</note>
+		/// </remarks>
+		/// <returns>A <see cref="SearchQuery"/>.</returns>
+		/// <param name="keywords">The keywords.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="keywords"/> is <c>null</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <para>One or more of the <paramref name="keywords"/> is <c>null</c> or empty.</para>
+		/// <para>-or-</para>
+		/// <para>No keywords were given.</para>
+		/// </exception>
+		public static SearchQuery NotKeywords (IEnumerable<string> keywords)
+		{
+			if (keywords == null)
+				throw new ArgumentNullException (nameof (keywords));
+
+			var list = new List<SearchQuery> ();
+
+			foreach (var keyword in keywords) {
+				if (string.IsNullOrEmpty (keyword))
+					throw new ArgumentException ("Cannot search for null or empty keywords.", nameof (keywords));
+
+				list.Add (new TextSearchQuery (SearchTerm.NotKeyword, keyword));
+			}
+
+			if (list.Count == 0)
+				throw new ArgumentException ("No flags specified.", nameof (keywords));
 
 			var query = list[0];
 			for (int i = 1; i < list.Count; i++)
@@ -657,6 +810,14 @@ namespace MailKit.Search {
 		public static readonly SearchQuery NotSeen = new SearchQuery (SearchTerm.NotSeen);
 
 		/// <summary>
+		/// Match messages that do not have the <see cref="MessageFlags.Recent"/> flag set.
+		/// </summary>
+		/// <remarks>
+		/// Matches messages that do not have the <see cref="MessageFlags.Recent"/> flag set.
+		/// </remarks>
+		public static readonly SearchQuery Old = new SearchQuery (SearchTerm.NotRecent);
+
+		/// <summary>
 		/// Match messages older than the specified number of seconds.
 		/// </summary>
 		/// <remarks>
@@ -728,6 +889,59 @@ namespace MailKit.Search {
 		public static readonly SearchQuery Recent = new SearchQuery (SearchTerm.Recent);
 
 		/// <summary>
+		/// Match all messages in the mailbox when the underlying storage of that mailbox supports
+		/// the save date attribute.
+		/// </summary>
+		/// <remarks>
+		/// Matches all messages in the mailbox when the underlying storage of that mailbox supports
+		/// the save date attribute. Conversely, it matches no messages in the mailbox when the save
+		/// date attribute is not supported.
+		/// </remarks>
+		public static readonly SearchQuery SaveDateSupported = new SearchQuery (SearchTerm.SaveDateSupported);
+
+		/// <summary>
+		/// Match messages that were saved to the mailbox before the specified date.
+		/// </summary>
+		/// <remarks>
+		/// <para>Matches messages that were saved to the mailbox before the specified date.</para>
+		/// <note type="note">The resolution of this search query does not include the time.</note>
+		/// </remarks>
+		/// <returns>A <see cref="DateSearchQuery"/>.</returns>
+		/// <param name="date">The date.</param>
+		public static DateSearchQuery SavedBefore (DateTime date)
+		{
+			return new DateSearchQuery (SearchTerm.SavedBefore, date);
+		}
+
+		/// <summary>
+		/// Match messages that were saved to the mailbox on the specified date.
+		/// </summary>
+		/// <remarks>
+		/// <para>Matches messages that were saved to the mailbox on the specified date.</para>
+		/// <note type="note">The resolution of this search query does not include the time.</note>
+		/// </remarks>
+		/// <returns>A <see cref="DateSearchQuery"/>.</returns>
+		/// <param name="date">The date.</param>
+		public static DateSearchQuery SavedOn (DateTime date)
+		{
+			return new DateSearchQuery (SearchTerm.SavedOn, date);
+		}
+
+		/// <summary>
+		/// Match messages that were saved to the mailbox since the specified date.
+		/// </summary>
+		/// <remarks>
+		/// <para>Matches messages that were saved to the mailbox since the specified date.</para>
+		/// <note type="note">The resolution of this search query does not include the time.</note>
+		/// </remarks>
+		/// <returns>A <see cref="DateSearchQuery"/>.</returns>
+		/// <param name="date">The date.</param>
+		public static DateSearchQuery SavedSince (DateTime date)
+		{
+			return new DateSearchQuery (SearchTerm.SavedSince, date);
+		}
+
+		/// <summary>
 		/// Match messages with the <see cref="MessageFlags.Seen"/> flag set.
 		/// </summary>
 		/// <remarks>
@@ -736,23 +950,26 @@ namespace MailKit.Search {
 		public static readonly SearchQuery Seen = new SearchQuery (SearchTerm.Seen);
 
 		/// <summary>
-		/// Match messages that were sent after the specified date.
+		/// Match messages that were sent on or after the specified date.
 		/// </summary>
 		/// <remarks>
-		/// Matches messages that were sent after the specified date.
+		/// <para>Matches messages that were sent on or after the specified date.</para>
+		/// <para>The resolution of this search query does not include the time.</para>
 		/// </remarks>
 		/// <returns>A <see cref="DateSearchQuery"/>.</returns>
 		/// <param name="date">The date.</param>
+		[Obsolete ("Use SentSince (DateTime)")]
 		public static DateSearchQuery SentAfter (DateTime date)
 		{
-			return new DateSearchQuery (SearchTerm.SentAfter, date);
+			return SentSince (date);
 		}
 
 		/// <summary>
 		/// Match messages that were sent before the specified date.
 		/// </summary>
 		/// <remarks>
-		/// Matches messages that were sent before the specified date.
+		/// <para>Matches messages that were sent before the specified date.</para>
+		/// <note type="note">The resolution of this search query does not include the time.</note>
 		/// </remarks>
 		/// <returns>A <see cref="DateSearchQuery"/>.</returns>
 		/// <param name="date">The date.</param>
@@ -765,13 +982,28 @@ namespace MailKit.Search {
 		/// Match messages that were sent on the specified date.
 		/// </summary>
 		/// <remarks>
-		/// Matches messages that were sent on the specified date.
+		/// <para>Matches messages that were sent on the specified date.</para>
+		/// <note type="note">The resolution of this search query does not include the time.</note>
 		/// </remarks>
 		/// <returns>A <see cref="DateSearchQuery"/>.</returns>
 		/// <param name="date">The date.</param>
 		public static DateSearchQuery SentOn (DateTime date)
 		{
 			return new DateSearchQuery (SearchTerm.SentOn, date);
+		}
+
+		/// <summary>
+		/// Match messages that were sent since the specified date.
+		/// </summary>
+		/// <remarks>
+		/// <para>Matches messages that were sent since the specified date.</para>
+		/// <note type="note">The resolution of this search query does not include the time.</note>
+		/// </remarks>
+		/// <returns>A <see cref="DateSearchQuery"/>.</returns>
+		/// <param name="date">The date.</param>
+		public static DateSearchQuery SentSince (DateTime date)
+		{
+			return new DateSearchQuery (SearchTerm.SentSince, date);
 		}
 
 		/// <summary>

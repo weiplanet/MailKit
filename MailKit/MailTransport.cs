@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -40,6 +40,19 @@ namespace MailKit {
 	/// </remarks>
 	public abstract class MailTransport : MailService, IMailTransport
 	{
+		static readonly FormatOptions DefaultOptions;
+
+		static MailTransport ()
+		{
+			var options = FormatOptions.Default.Clone ();
+			options.HiddenHeaders.Add (HeaderId.ContentLength);
+			options.HiddenHeaders.Add (HeaderId.ResentBcc);
+			options.HiddenHeaders.Add (HeaderId.Bcc);
+			options.NewLineFormat = NewLineFormat.Dos;
+
+			DefaultOptions = options;
+		}
+
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.MailTransport"/> class.
 		/// </summary>
@@ -103,7 +116,7 @@ namespace MailKit {
 		/// </exception>
 		public virtual void Send (MimeMessage message, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
-			Send (FormatOptions.Default, message, cancellationToken, progress);
+			Send (DefaultOptions, message, cancellationToken, progress);
 		}
 
 		/// <summary>
@@ -153,7 +166,7 @@ namespace MailKit {
 		/// </exception>
 		public virtual Task SendAsync (MimeMessage message, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
-			return SendAsync (FormatOptions.Default, message, cancellationToken, progress);
+			return SendAsync (DefaultOptions, message, cancellationToken, progress);
 		}
 
 		/// <summary>
@@ -202,7 +215,7 @@ namespace MailKit {
 		/// </exception>
 		public virtual void Send (MimeMessage message, MailboxAddress sender, IEnumerable<MailboxAddress> recipients, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
-			Send (FormatOptions.Default, message, sender, recipients, cancellationToken, progress);
+			Send (DefaultOptions, message, sender, recipients, cancellationToken, progress);
 		}
 
 		/// <summary>
@@ -252,7 +265,7 @@ namespace MailKit {
 		/// </exception>
 		public virtual Task SendAsync (MimeMessage message, MailboxAddress sender, IEnumerable<MailboxAddress> recipients, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
-			return SendAsync (FormatOptions.Default, message, sender, recipients, cancellationToken, progress);
+			return SendAsync (DefaultOptions, message, sender, recipients, cancellationToken, progress);
 		}
 
 		/// <summary>

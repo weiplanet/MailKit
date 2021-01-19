@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -41,6 +41,9 @@ namespace MailKit {
 			if (source == null)
 				throw new ArgumentNullException (nameof (source));
 
+			if (update == null)
+				throw new ArgumentNullException (nameof (update));
+
 			cancellable = source as ICancellableStream;
 			Source = source;
 			Update = update;
@@ -76,7 +79,7 @@ namespace MailKit {
 
 		public override long Position {
 			get { return Source.Position; }
-			set { Source.Position = value; }
+			set { Seek (value, SeekOrigin.Begin); }
 		}
 
 		public override int ReadTimeout {

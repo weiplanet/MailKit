@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Net;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 using MailKit.Security;
@@ -10,8 +9,6 @@ namespace ImapClientDemo
 {
 	public partial class LoginWindow : Form
 	{
-		CancellationTokenSource cancel = new CancellationTokenSource ();
-
 		public LoginWindow ()
 		{
 			InitializeComponent ();
@@ -77,24 +74,34 @@ namespace ImapClientDemo
 
 		async void SignInClicked (object sender, EventArgs e)
 		{
+			var options = SecureSocketOptions.StartTlsWhenAvailable;
+			var host = serverCombo.Text.Trim ();
 			var passwd = passwordTextBox.Text;
 			var user = loginTextBox.Text;
-
-			Program.HostName = serverCombo.Text.Trim ();
+			int port;
 
 			if (!string.IsNullOrEmpty (portCombo.Text))
-				Program.Port = int.Parse (portCombo.Text);
+				port = int.Parse (portCombo.Text);
 			else
-				Program.Port = 0; // default
+				port = 0; // default
 
 			Program.Credentials = new NetworkCredential (user, passwd);
 
 			if (sslCheckbox.Checked)
-				Program.SslOptions = SecureSocketOptions.SslOnConnect;
-			else
-				Program.SslOptions = SecureSocketOptions.StartTlsWhenAvailable;
+				options = SecureSocketOptions.SslOnConnect;
 
-			await Program.ReconnectAsync ();
+			try {
+				await Program.ReconnectAsync (host, port, options);
+			} catch {
+				MessageBox.Show ("Failed to Authenticate to server. If you are using GMail, then you probably " +
+					"need to go into your GMail settings to enable \"less secure apps\" in order " +
+					"to get this demo to work.\n\n" +
+					"For a real Mail application, you'll want to add support for obtaining the " +
+					"user's OAuth2 credentials to prevent the need for user's to enable this, but " +
+					"that is beyond the scope of this demo.",
+					"Authentication Error");
+				return;
+			}
 
 			Program.Queue (Program.MainWindow.LoadContentAsync);
 

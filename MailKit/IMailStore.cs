@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -31,10 +31,11 @@ using System.Collections.Generic;
 
 namespace MailKit {
 	/// <summary>
-	/// An interface for retreiving messages from a message store such as IMAP.
+	/// An interface for retreiving messages from a message store.
 	/// </summary>
 	/// <remarks>
-	/// Implemented by <see cref="MailKit.Net.Imap.ImapClient"/>.
+	/// <para>An interface for retreiving messages from a message store.</para>
+	/// <para>Implemented by <see cref="MailKit.Net.Imap.ImapClient"/>.</para>
 	/// </remarks>
 	public interface IMailStore : IMailService
 	{
@@ -73,6 +74,20 @@ namespace MailKit {
 		/// </remarks>
 		/// <value><c>true</c> if the mail store supports quotas; otherwise, <c>false</c>.</value>
 		bool SupportsQuotas { get; }
+
+		/// <summary>
+		/// Get the threading algorithms supported by the mail store.
+		/// </summary>
+		/// <remarks>
+		/// The threading algorithms are queried as part of the
+		/// <a href="Overload_MailKit_IMailStore_Connect.htm">Connect</a>
+		/// and <a href="Overload_MailKit_IMailStore_Authenticate.htm">Authenticate</a> methods.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ImapExamples.cs" region="Capabilities"/>
+		/// </example>
+		/// <value>The threading algorithms.</value>
+		HashSet<ThreadingAlgorithm> ThreadingAlgorithms { get; }
 
 		/// <summary>
 		/// Get the Inbox folder.
@@ -515,5 +530,21 @@ namespace MailKit {
 		/// will emit Alert events when they receive alert messages from the server.
 		/// </remarks>
 		event EventHandler<AlertEventArgs> Alert;
+
+		/// <summary>
+		/// Occurs when a folder is created.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="FolderCreated"/> event is emitted when a new folder is created.
+		/// </remarks>
+		event EventHandler<FolderCreatedEventArgs> FolderCreated;
+
+		/// <summary>
+		/// Occurs when metadata changes.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="MetadataChanged"/> event is emitted when metadata changes.
+		/// </remarks>
+		event EventHandler<MetadataChangedEventArgs> MetadataChanged;
 	}
 }

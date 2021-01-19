@@ -6,7 +6,7 @@
 //
 // Copyright (c) 2003 Motus Technologies Inc. (http://www.motus.com)
 // Copyright (c) 2004 Novell, Inc (http://www.novell.com)
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // References
 // a.	NTLM Authentication Scheme for HTTP, Ronald Tschalär
@@ -36,12 +36,7 @@
 
 using System;
 using System.Text;
-
-#if !NETFX_CORE
 using System.Security.Cryptography;
-#else
-using Encoding = Portable.Text.Encoding;
-#endif
 
 namespace MailKit.Security.Ntlm {
 	class Type2Message : MessageBase
@@ -51,11 +46,16 @@ namespace MailKit.Security.Ntlm {
 
 		public Type2Message () : base (2)
 		{
-			Flags = (NtlmFlags) 0x8201;
+			Flags = NtlmFlags.NegotiateNtlm | NtlmFlags.NegotiateUnicode /*| NtlmFlags.NegotiateAlwaysSign*/;
 			nonce = new byte[8];
 
 			using (var rng = RandomNumberGenerator.Create ())
 				rng.GetBytes (nonce);
+		}
+
+		public Type2Message (Version osVersion) : this ()
+		{
+			OSVersion = osVersion;
 		}
 
 		public Type2Message (byte[] message, int startIndex, int length) : base (2)
@@ -84,11 +84,11 @@ namespace MailKit.Security.Ntlm {
 		}
 
 		public string TargetName {
-			get; private set;
+			get; set;
 		}
 
 		public TargetInfo TargetInfo {
-			get; private set;
+			get; set;
 		}
 
 		public byte[] EncodedTargetInfo {
@@ -112,18 +112,27 @@ namespace MailKit.Security.Ntlm {
 			var targetNameOffset = BitConverterLE.ToUInt16 (message, startIndex + 16);
 
 			if (targetNameLength > 0) {
-				var encoding = (Flags & NtlmFlags.NegotiateOem) != 0 ? Encoding.UTF8 : Encoding.Unicode;
+				var encoding = (Flags & NtlmFlags.NegotiateUnicode) != 0 ? Encoding.Unicode : Encoding.UTF8;
 
 				TargetName = encoding.GetString (message, startIndex + targetNameOffset, targetNameLength);
 			}
 
+			if ((Flags & NtlmFlags.NegotiateVersion) != 0 && length >= 56) {
+				// decode the OS Version
+				int major = message[startIndex + 48];
+				int minor = message[startIndex + 49];
+				int build = BitConverterLE.ToUInt16 (message, startIndex + 50);
+
+				OSVersion = new Version (major, minor, build);
+			}
+
 			// The Target Info block is optional.
-			if (message.Length >= 48 && targetNameOffset >= 48) {
+			if (length >= 48 && targetNameOffset >= 48) {
 				var targetInfoLength = BitConverterLE.ToUInt16 (message, startIndex + 40);
 				var targetInfoOffset = BitConverterLE.ToUInt16 (message, startIndex + 44);
 
-				if (targetInfoLength > 0 && targetInfoOffset < message.Length && targetInfoLength <= (message.Length - targetInfoOffset)) {
-					TargetInfo = new TargetInfo (message, startIndex + targetInfoOffset, targetInfoLength, (Flags & NtlmFlags.NegotiateUnicode) != 0);
+				if (targetInfoLength > 0 && targetInfoOffset < length && targetInfoLength <= (length - targetInfoOffset)) {
+					TargetInfo = new TargetInfo (message, startIndex + targetInfoOffset, targetInfoLength, (Flags & NtlmFlags.NegotiateOem) == 0);
 
 					targetInfo = new byte[targetInfoLength];
 					Buffer.BlockCopy (message, startIndex + targetInfoOffset, targetInfo, 0, targetInfoLength);
@@ -133,22 +142,81 @@ namespace MailKit.Security.Ntlm {
 
 		public override byte[] Encode ()
 		{
-			byte[] data = PrepareMessage (40);
+			int targetNameOffset = 40;
+			int targetInfoOffset = 48;
+			byte[] targetName = null;
+			bool negotiateVersion;
+			int size = 40;
+
+			if (negotiateVersion = (Flags & NtlmFlags.NegotiateVersion) != 0) {
+				targetNameOffset += 16;
+				targetInfoOffset += 16;
+				size += 16;
+			}
+
+			if (TargetName != null) {
+				var encoding = (Flags & NtlmFlags.NegotiateUnicode) != 0 ? Encoding.Unicode : Encoding.UTF8;
+
+				targetName = encoding.GetBytes (TargetName);
+				targetInfoOffset += targetName.Length;
+				size += targetName.Length;
+			}
+
+			if (TargetInfo != null || targetInfo != null) {
+				if (targetInfo == null)
+					targetInfo = TargetInfo.Encode ((Flags & NtlmFlags.NegotiateUnicode) != 0);
+				size += targetInfo.Length + 8;
+				targetNameOffset += 8;
+			}
+
+			var message = PrepareMessage (size);
 
 			// message length
-			short length = (short) data.Length;
-			data[16] = (byte) length;
-			data[17] = (byte)(length >> 8);
+			message[16] = (byte) size;
+			message[17] = (byte)(size >> 8);
 
 			// flags
-			data[20] = (byte) Flags;
-			data[21] = (byte)((uint) Flags >> 8);
-			data[22] = (byte)((uint) Flags >> 16);
-			data[23] = (byte)((uint) Flags >> 24);
+			message[20] = (byte) Flags;
+			message[21] = (byte)((uint) Flags >> 8);
+			message[22] = (byte)((uint) Flags >> 16);
+			message[23] = (byte)((uint) Flags >> 24);
 
-			Buffer.BlockCopy (nonce, 0, data, 24, nonce.Length);
+			Buffer.BlockCopy (nonce, 0, message, 24, nonce.Length);
 
-			return data;
+			if (targetName != null) {
+				message[12] = (byte) targetName.Length;
+				message[13] = (byte)(targetName.Length >> 8);
+				message[14] = (byte)targetName.Length;
+				message[15] = (byte)(targetName.Length >> 8);
+				message[16] = (byte) targetNameOffset;
+				message[17] = (byte)(targetNameOffset >> 8);
+
+				Buffer.BlockCopy (targetName, 0, message, targetNameOffset, targetName.Length);
+			}
+
+			if (targetInfo != null) {
+				message[40] = (byte) targetInfo.Length;
+				message[41] = (byte)(targetInfo.Length >> 8);
+				message[42] = (byte) targetInfo.Length;
+				message[43] = (byte)(targetInfo.Length >> 8);
+				message[44] = (byte) targetInfoOffset;
+				message[45] = (byte)(targetInfoOffset >> 8);
+
+				Buffer.BlockCopy (targetInfo, 0, message, targetInfoOffset, targetInfo.Length);
+			}
+
+			if (negotiateVersion) {
+				message[48] = (byte) OSVersion.Major;
+				message[49] = (byte) OSVersion.Minor;
+				message[50] = (byte) OSVersion.Build;
+				message[51] = (byte) (OSVersion.Build >> 8);
+				message[52] = 0x00;
+				message[53] = 0x00;
+				message[54] = 0x00;
+				message[55] = 0x0f;
+			}
+
+			return message;
 		}
 	}
 }

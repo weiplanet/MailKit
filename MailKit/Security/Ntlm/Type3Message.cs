@@ -6,7 +6,7 @@
 //
 // Copyright (c) 2003 Motus Technologies Inc. (http://www.motus.com)
 // Copyright (c) 2004 Novell, Inc (http://www.novell.com)
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // References
 // a.	NTLM Authentication Scheme for HTTP, Ronald Tschalär
@@ -37,17 +37,11 @@
 using System;
 using System.Text;
 
-#if NETFX_CORE
-using Encoding = Portable.Text.Encoding;
-#endif
-
 namespace MailKit.Security.Ntlm {
 	class Type3Message : MessageBase
 	{
 		readonly Type2Message type2;
 		readonly byte[] challenge;
-		string domain;
-		string host;
 
 		public Type3Message (byte[] message, int startIndex, int length) : base (3)
 		{
@@ -55,28 +49,38 @@ namespace MailKit.Security.Ntlm {
 			type2 = null;
 		}
 
-		public Type3Message (Type2Message type2, string userName, string hostName) : base (3)
+		public Type3Message (Type2Message type2, Version osVersion, NtlmAuthLevel level, string userName, string password, string host) : base (3)
 		{
 			this.type2 = type2;
 
-			Level = NtlmSettings.DefaultAuthLevel;
-
-			challenge = (byte[]) type2.Nonce.Clone ();
+			challenge = type2.Nonce;
 			Domain = type2.TargetName;
+			OSVersion = osVersion;
 			Username = userName;
-			Host = hostName;
+			Password = password;
+			Level = level;
+			Host = host;
+			Flags = 0;
 
-			Flags = (NtlmFlags) 0x8200;
+			if (osVersion != null)
+				Flags |= NtlmFlags.NegotiateVersion;
+
 			if ((type2.Flags & NtlmFlags.NegotiateUnicode) != 0)
 				Flags |= NtlmFlags.NegotiateUnicode;
 			else
 				Flags |= NtlmFlags.NegotiateOem;
 
+			if ((type2.Flags & NtlmFlags.NegotiateNtlm) != 0)
+				Flags |= NtlmFlags.NegotiateNtlm;
+
 			if ((type2.Flags & NtlmFlags.NegotiateNtlm2Key) != 0)
 				Flags |= NtlmFlags.NegotiateNtlm2Key;
 
-			if ((type2.Flags & NtlmFlags.NegotiateVersion) != 0)
-				Flags |= NtlmFlags.NegotiateVersion;
+			if ((type2.Flags & NtlmFlags.NegotiateTargetInfo) != 0)
+				Flags |= NtlmFlags.NegotiateTargetInfo;
+
+			if ((type2.Flags & NtlmFlags.RequestTarget) != 0)
+				Flags |= NtlmFlags.RequestTarget;
 		}
 
 		~Type3Message ()
@@ -96,31 +100,11 @@ namespace MailKit.Security.Ntlm {
 		}
 
 		public string Domain {
-			get { return domain; }
-			set {
-				if (string.IsNullOrEmpty (value)) {
-					Flags &= ~NtlmFlags.NegotiateDomainSupplied;
-					value = string.Empty;
-				} else {
-					Flags |= NtlmFlags.NegotiateDomainSupplied;
-				}
-
-				domain = value;
-			}
+			get; set;
 		}
 
 		public string Host {
-			get { return host; }
-			set {
-				if (string.IsNullOrEmpty (value)) {
-					Flags &= ~NtlmFlags.NegotiateWorkstationSupplied;
-					value = string.Empty;
-				} else {
-					Flags |= NtlmFlags.NegotiateWorkstationSupplied;
-				}
-
-				host = value;
-			}
+			get; set;
 		}
 
 		public string Password {
@@ -162,7 +146,7 @@ namespace MailKit.Security.Ntlm {
 
 			int domainLength = BitConverterLE.ToUInt16 (message, startIndex + 28);
 			int domainOffset = BitConverterLE.ToUInt16 (message, startIndex + 32);
-			domain = DecodeString (message, startIndex + domainOffset, domainLength);
+			Domain = DecodeString (message, startIndex + domainOffset, domainLength);
 
 			int userLength = BitConverterLE.ToUInt16 (message, startIndex + 36);
 			int userOffset = BitConverterLE.ToUInt16 (message, startIndex + 40);
@@ -170,11 +154,21 @@ namespace MailKit.Security.Ntlm {
 
 			int hostLength = BitConverterLE.ToUInt16 (message, startIndex + 44);
 			int hostOffset = BitConverterLE.ToUInt16 (message, startIndex + 48);
-			host = DecodeString (message, startIndex + hostOffset, hostLength);
+			Host = DecodeString (message, startIndex + hostOffset, hostLength);
 
 			// Session key.  We don't use it yet.
-			// int skeyLength = BitConverterLE.ToUInt16 (message, startIndex + 52);
-			// int skeyOffset = BitConverterLE.ToUInt16 (message, startIndex + 56);
+			//int skeyLength = BitConverterLE.ToUInt16 (message, startIndex + 52);
+			//int skeyOffset = BitConverterLE.ToUInt16 (message, startIndex + 56);
+
+			// OSVersion
+			if ((Flags & NtlmFlags.NegotiateVersion) != 0 && length >= 72) {
+				// decode the OS Version
+				int major = message[startIndex + 64];
+				int minor = message[startIndex + 65];
+				int build = BitConverterLE.ToUInt16 (message, startIndex + 66);
+
+				OSVersion = new Version (major, minor, build);
+			}
 		}
 
 		string DecodeString (byte[] buffer, int offset, int len)
@@ -196,124 +190,108 @@ namespace MailKit.Security.Ntlm {
 
 		public override byte[] Encode ()
 		{
-			var target = EncodeString (domain);
+			var target = EncodeString (Domain);
 			var user = EncodeString (Username);
-			var hostName = EncodeString (host);
+			var host = EncodeString (Host);
 			var payloadOffset = 64;
-			bool reqVersion;
+			bool negotiateVersion;
 			byte[] lm, ntlm;
 
-			if (type2 == null) {
-				if (Level != NtlmAuthLevel.LM_and_NTLM)
-					throw new InvalidOperationException ("Refusing to use legacy-mode LM/NTLM authentication unless explicitly enabled using NtlmSettings.DefaultAuthLevel.");
-				
-				using (var legacy = new ChallengeResponse (Password, challenge)) {
-					lm = legacy.LM;
-					ntlm = legacy.NT;
-				}
+			ChallengeResponse2.Compute (type2, Level, Username, Password, Domain, out lm, out ntlm);
 
-				reqVersion = false;
-			} else {
-				ChallengeResponse2.Compute (type2, Level, Username, Password, domain, out lm, out ntlm);
-
-				if ((reqVersion = (type2.Flags & NtlmFlags.NegotiateVersion) != 0))
-					payloadOffset += 8;
-			}
+			if (negotiateVersion = (type2.Flags & NtlmFlags.NegotiateVersion) != 0)
+				payloadOffset += 8;
 
 			var lmResponseLength = lm != null ? lm.Length : 0;
 			var ntResponseLength = ntlm != null ? ntlm.Length : 0;
 
-			var data = PrepareMessage (payloadOffset + target.Length + user.Length + hostName.Length + lmResponseLength + ntResponseLength);
+			var message = PrepareMessage (payloadOffset + target.Length + user.Length + host.Length + lmResponseLength + ntResponseLength);
 
 			// LM response
-			short lmResponseOffset = (short) (payloadOffset + target.Length + user.Length + hostName.Length);
-			data[12] = (byte) lmResponseLength;
-			data[13] = (byte) 0x00;
-			data[14] = data[12];
-			data[15] = data[13];
-			data[16] = (byte) lmResponseOffset;
-			data[17] = (byte) (lmResponseOffset >> 8);
+			short lmResponseOffset = (short) (payloadOffset + target.Length + user.Length + host.Length);
+			message[12] = (byte) lmResponseLength;
+			message[13] = (byte) 0x00;
+			message[14] = message[12];
+			message[15] = message[13];
+			message[16] = (byte) lmResponseOffset;
+			message[17] = (byte) (lmResponseOffset >> 8);
 
 			// NT response
 			short ntResponseOffset = (short) (lmResponseOffset + lmResponseLength);
-			data[20] = (byte) ntResponseLength;
-			data[21] = (byte) (ntResponseLength >> 8);
-			data[22] = data[20];
-			data[23] = data[21];
-			data[24] = (byte) ntResponseOffset;
-			data[25] = (byte) (ntResponseOffset >> 8);
+			message[20] = (byte) ntResponseLength;
+			message[21] = (byte) (ntResponseLength >> 8);
+			message[22] = message[20];
+			message[23] = message[21];
+			message[24] = (byte) ntResponseOffset;
+			message[25] = (byte) (ntResponseOffset >> 8);
 
 			// target
 			short domainLength = (short) target.Length;
 			short domainOffset = (short) payloadOffset;
-			data[28] = (byte) domainLength;
-			data[29] = (byte) (domainLength >> 8);
-			data[30] = data[28];
-			data[31] = data[29];
-			data[32] = (byte) domainOffset;
-			data[33] = (byte) (domainOffset >> 8);
+			message[28] = (byte) domainLength;
+			message[29] = (byte) (domainLength >> 8);
+			message[30] = message[28];
+			message[31] = message[29];
+			message[32] = (byte) domainOffset;
+			message[33] = (byte) (domainOffset >> 8);
 
 			// username
 			short userLength = (short) user.Length;
 			short userOffset = (short) (domainOffset + domainLength);
-			data[36] = (byte) userLength;
-			data[37] = (byte) (userLength >> 8);
-			data[38] = data[36];
-			data[39] = data[37];
-			data[40] = (byte) userOffset;
-			data[41] = (byte) (userOffset >> 8);
+			message[36] = (byte) userLength;
+			message[37] = (byte) (userLength >> 8);
+			message[38] = message[36];
+			message[39] = message[37];
+			message[40] = (byte) userOffset;
+			message[41] = (byte) (userOffset >> 8);
 
 			// host
-			short hostLength = (short) hostName.Length;
+			short hostLength = (short) host.Length;
 			short hostOffset = (short) (userOffset + userLength);
-			data[44] = (byte) hostLength;
-			data[45] = (byte) (hostLength >> 8);
-			data[46] = data[44];
-			data[47] = data[45];
-			data[48] = (byte) hostOffset;
-			data[49] = (byte) (hostOffset >> 8);
+			message[44] = (byte) hostLength;
+			message[45] = (byte) (hostLength >> 8);
+			message[46] = message[44];
+			message[47] = message[45];
+			message[48] = (byte) hostOffset;
+			message[49] = (byte) (hostOffset >> 8);
 
 			// message length
-			short messageLength = (short) data.Length;
-			data[56] = (byte) messageLength;
-			data[57] = (byte) (messageLength >> 8);
+			short messageLength = (short) message.Length;
+			message[56] = (byte) messageLength;
+			message[57] = (byte) (messageLength >> 8);
 
 			// options flags
-			data[60] = (byte) Flags;
-			data[61] = (byte)((uint) Flags >> 8);
-			data[62] = (byte)((uint) Flags >> 16);
-			data[63] = (byte)((uint) Flags >> 24);
+			message[60] = (byte) Flags;
+			message[61] = (byte)((uint) Flags >> 8);
+			message[62] = (byte)((uint) Flags >> 16);
+			message[63] = (byte)((uint) Flags >> 24);
 
-			if (reqVersion) {
-				// encode the Windows version as Windows 10.0
-				data[64] = 0x0A;
-				data[65] = 0x0;
-
-				// encode the ProductBuild version
-				data[66] = (byte) (10586 & 0xff);
-				data[67] = (byte) (10586 >> 8);
-
-				// next 3 bytes are reserved and should remain 0
-
-				// encode the NTLMRevisionCurrent version
-				data[71] = 0x0F;
+			if (negotiateVersion) {
+				message[64] = (byte) OSVersion.Major;
+				message[65] = (byte) OSVersion.Minor;
+				message[66] = (byte) OSVersion.Build;
+				message[67] = (byte) (OSVersion.Build >> 8);
+				message[68] = 0x00;
+				message[69] = 0x00;
+				message[70] = 0x00;
+				message[71] = 0x0f;
 			}
 
-			Buffer.BlockCopy (target, 0, data, domainOffset, target.Length);
-			Buffer.BlockCopy (user, 0, data, userOffset, user.Length);
-			Buffer.BlockCopy (hostName, 0, data, hostOffset, hostName.Length);
+			Buffer.BlockCopy (target, 0, message, domainOffset, target.Length);
+			Buffer.BlockCopy (user, 0, message, userOffset, user.Length);
+			Buffer.BlockCopy (host, 0, message, hostOffset, host.Length);
 
 			if (lm != null) {
-				Buffer.BlockCopy (lm, 0, data, lmResponseOffset, lm.Length);
+				Buffer.BlockCopy (lm, 0, message, lmResponseOffset, lm.Length);
 				Array.Clear (lm, 0, lm.Length);
 			}
 
 			if (ntlm != null) {
-				Buffer.BlockCopy (ntlm, 0, data, ntResponseOffset, ntlm.Length);
+				Buffer.BlockCopy (ntlm, 0, message, ntResponseOffset, ntlm.Length);
 				Array.Clear (ntlm, 0, ntlm.Length);
 			}
 
-			return data;
+			return message;
 		}
 	}
 }

@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,13 +27,9 @@
 using System;
 using System.Net;
 using System.Text;
+using System.Globalization;
 using System.Collections.Generic;
-
-#if NETFX_CORE
-using Encoding = Portable.Text.Encoding;
-#else
 using System.Security.Cryptography;
-#endif
 
 namespace MailKit.Security {
 	/// <summary>
@@ -50,26 +46,10 @@ namespace MailKit.Security {
 			Validate
 		}
 
+		internal string cnonce;
 		string client, server;
 		byte[] salted, auth;
 		LoginState state;
-		string cnonce;
-
-		/// <summary>
-		/// Initializes a new instance of the <see cref="MailKit.Security.SaslMechanismScramBase"/> class.
-		/// </summary>
-		/// <remarks>
-		/// Creates a new SCRAM-based SASL context.
-		/// </remarks>
-		/// <param name="credentials">The user's credentials.</param>
-		/// <param name="entropy">Random characters to act as the cnonce token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="credentials"/> is <c>null</c>.
-		/// </exception>
-		internal protected SaslMechanismScramBase (NetworkCredential credentials, string entropy) : base (credentials)
-		{
-			cnonce = entropy;
-		}
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Security.SaslMechanismScramBase"/> class.
@@ -301,21 +281,13 @@ namespace MailKit.Security {
 		protected override byte[] Challenge (byte[] token, int startIndex, int length)
 		{
 			if (IsAuthenticated)
-				throw new InvalidOperationException ();
+				return null;
 
 			byte[] response, signature;
 
 			switch (state) {
 			case LoginState.Initial:
-				if (string.IsNullOrEmpty (cnonce)) {
-					var entropy = new byte[18];
-
-					using (var rng = RandomNumberGenerator.Create ())
-						rng.GetBytes (entropy);
-
-					cnonce = Convert.ToBase64String (entropy);
-				}
-
+				cnonce = cnonce ?? GenerateEntropy (18);
 				client = "n=" + Normalize (Credentials.UserName) + ",r=" + cnonce;
 				response = Encoding.UTF8.GetBytes ("n,," + client);
 				state = LoginState.Final;
@@ -338,11 +310,12 @@ namespace MailKit.Security {
 				if (!nonce.StartsWith (cnonce, StringComparison.Ordinal))
 					throw new SaslException (MechanismName, SaslErrorCode.InvalidChallenge, "Challenge contained an invalid nonce.");
 
-				if (!int.TryParse (iterations, out count) || count < 1)
+				if (!int.TryParse (iterations, NumberStyles.None, CultureInfo.InvariantCulture, out count) || count < 1)
 					throw new SaslException (MechanismName, SaslErrorCode.InvalidChallenge, "Challenge contained an invalid iteration count.");
 
 				var password = Encoding.UTF8.GetBytes (SaslPrep (Credentials.Password));
 				salted = Hi (password, Convert.FromBase64String (salt), count);
+				Array.Clear (password, 0, password.Length);
 
 				var withoutProof = "c=" + Convert.ToBase64String (Encoding.ASCII.GetBytes ("n,,")) + ",r=" + nonce;
 				auth = Encoding.UTF8.GetBytes (client + "," + server + "," + withoutProof);

@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,7 @@ using System;
 using System.Net;
 using System.Text;
 
-#if NETFX_CORE || NETSTANDARD
+#if NETSTANDARD1_3 || NETSTANDARD1_6
 using MD5 = MimeKit.Cryptography.MD5;
 #else
 using System.Security.Cryptography;
@@ -150,11 +150,11 @@ namespace MailKit.Security {
 		/// </exception>
 		protected override byte[] Challenge (byte[] token, int startIndex, int length)
 		{
-			if (IsAuthenticated)
-				throw new InvalidOperationException ();
-
 			if (token == null)
 				throw new NotSupportedException ("CRAM-MD5 does not support SASL-IR.");
+
+			if (IsAuthenticated)
+				return null;
 
 			var userName = Encoding.UTF8.GetBytes (Credentials.UserName);
 			var password = Encoding.UTF8.GetBytes (Credentials.Password);
@@ -174,6 +174,8 @@ namespace MailKit.Security {
 				Array.Copy (password, ipad, password.Length);
 				Array.Copy (password, opad, password.Length);
 			}
+
+			Array.Clear (password, 0, password.Length);
 
 			for (int i = 0; i < 64; i++) {
 				ipad[i] ^= 0x36;

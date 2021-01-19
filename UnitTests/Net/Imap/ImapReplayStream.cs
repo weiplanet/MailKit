@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -36,6 +36,8 @@ using NUnit.Framework;
 using MimeKit.IO;
 using MimeKit.IO.Filters;
 
+using MailKit;
+
 namespace UnitTests.Net.Imap {
 	enum ImapReplayCommandResponse {
 		OK,
@@ -44,48 +46,263 @@ namespace UnitTests.Net.Imap {
 		Plus
 	}
 
-	class ImapReplayCommand
+	class ImapReplayFilter : MimeFilterBase
 	{
-		public string Command { get; private set; }
-		public byte[] Response { get; private set; }
+		readonly byte[] variable;
+		readonly byte[] value;
 
-		public ImapReplayCommand (string command, byte[] response)
+		public ImapReplayFilter (string variable, string value)
 		{
-			Command = command;
-			Response = response;
+			this.variable = Encoding.ASCII.GetBytes (variable);
+			this.value = Encoding.ASCII.GetBytes (value);
 		}
 
-		public ImapReplayCommand (string command, string resource)
+		protected override byte[] Filter (byte[] input, int startIndex, int length, out int outputIndex, out int outputLength, bool flush)
 		{
+			int endIndex = startIndex + length;
+			int copyIndex = startIndex;
+			int copyLength = 0;
+
+			for (int index = startIndex; index < endIndex - variable.Length; index++) {
+				var matched = true;
+
+				for (int i = 0; i < variable.Length; i++) {
+					if (input[index + i] != variable[i]) {
+						matched = false;
+						break;
+					}
+				}
+
+				if (!matched)
+					continue;
+
+				int n = index - copyIndex;
+
+				EnsureOutputSize (copyLength + n + value.Length, true);
+				Buffer.BlockCopy (input, copyIndex, OutputBuffer, copyLength, n);
+				index += variable.Length;
+				copyIndex = index;
+				copyLength += n;
+
+				Buffer.BlockCopy (value, 0, OutputBuffer, copyLength, value.Length);
+				copyLength += value.Length;
+			}
+
+			if (flush) {
+				if (copyLength == 0) {
+					outputIndex = startIndex;
+					outputLength = length;
+
+					return input;
+				}
+
+				int n = endIndex - copyIndex;
+
+				EnsureOutputSize (copyLength + n, true);
+				Buffer.BlockCopy (input, copyIndex, OutputBuffer, copyLength, n);
+				copyLength += n;
+
+				outputLength = copyLength;
+				outputIndex = 0;
+
+				return OutputBuffer;
+			} else {
+				int n = Math.Min (variable.Length, length);
+
+				SaveRemainingInput (input, endIndex - n, n);
+
+				if (copyLength == 0) {
+					outputLength = length - n;
+					outputIndex = startIndex;
+
+					return input;
+				}
+
+				endIndex -= n;
+
+				if (endIndex > copyIndex) {
+					n = endIndex - copyIndex;
+					EnsureOutputSize (copyLength + n, true);
+					Buffer.BlockCopy (input, copyIndex, OutputBuffer, copyLength, n);
+					copyLength += n;
+				}
+
+				outputLength = copyLength;
+				outputIndex = 0;
+
+				return OutputBuffer;
+			}
+		}
+
+		public override void Reset ()
+		{
+			base.Reset ();
+		}
+	}
+
+	class ImapReplayCommand
+	{
+		static readonly Encoding Latin1 = Encoding.GetEncoding (28591);
+
+		public Encoding Encoding { get; private set; }
+		public byte[] CommandBuffer { get; private set; }
+		public string Command { get; private set; }
+		public byte[] Response { get; private set; }
+		public bool Compressed { get; private set; }
+
+		public ImapReplayCommand (string command, byte[] response, bool compressed = false) : this (Latin1, command, response, compressed)
+		{
+		}
+
+		public ImapReplayCommand (Encoding encoding, string command, byte[] response, bool compressed = false)
+		{
+			CommandBuffer = encoding.GetBytes (command);
+			Compressed = compressed;
+			Response = response;
+			Encoding = encoding;
+			Command = command;
+
+			if (compressed) {
+				using (var memory = new MemoryStream ()) {
+					using (var compress = new CompressedStream (memory)) {
+						compress.Write (CommandBuffer, 0, CommandBuffer.Length);
+						compress.Flush ();
+
+						CommandBuffer = memory.ToArray ();
+					}
+				}
+			}
+		}
+
+		public ImapReplayCommand (string command, string resource, bool compressed = false) : this (Latin1, command, resource, compressed)
+		{
+		}
+
+		public ImapReplayCommand (Encoding encoding, string command, string resource, bool compressed = false)
+		{
+			string tag = null;
+
+			CommandBuffer = encoding.GetBytes (command);
+			Compressed = compressed;
+			Encoding = encoding;
+			Command = command;
+
+			if (command.StartsWith ("A00000", StringComparison.Ordinal))
+				tag = command.Substring (0, 9);
+
+			using (var stream = GetType ().Assembly.GetManifestResourceStream ("UnitTests.Net.Imap.Resources." + resource)) {
+				using (var memory = new MemoryBlockStream ()) {
+					using (Stream compress = new CompressedStream (memory)) {
+						using (var filtered = new FilteredStream (compressed ? compress : memory)) {
+							if (tag != null)
+								filtered.Add (new ImapReplayFilter ("A########", tag));
+
+							filtered.Add (new Unix2DosFilter ());
+							stream.CopyTo (filtered, 4096);
+							filtered.Flush ();
+						}
+
+						Response = memory.ToArray ();
+					}
+				}
+			}
+
+			if (compressed) {
+				using (var memory = new MemoryStream ()) {
+					using (var compress = new CompressedStream (memory)) {
+						compress.Write (CommandBuffer, 0, CommandBuffer.Length);
+						compress.Flush ();
+
+						CommandBuffer = memory.ToArray ();
+					}
+				}
+			}
+		}
+
+		public ImapReplayCommand (string tag, string command, string resource, bool compressed = false) : this (Latin1, tag, command, resource, compressed)
+		{
+		}
+
+		public ImapReplayCommand (Encoding encoding, string tag, string command, string resource, bool compressed = false)
+		{
+			CommandBuffer = encoding.GetBytes (command);
+			Compressed = compressed;
+			Encoding = encoding;
 			Command = command;
 
 			using (var stream = GetType ().Assembly.GetManifestResourceStream ("UnitTests.Net.Imap.Resources." + resource)) {
-				var memory = new MemoryBlockStream ();
+				using (var memory = new MemoryBlockStream ()) {
+					using (Stream compress = new CompressedStream (memory)) {
+						using (var filtered = new FilteredStream (compressed ? compress : memory)) {
+							filtered.Add (new ImapReplayFilter ("A########", tag));
+							filtered.Add (new Unix2DosFilter ());
+							stream.CopyTo (filtered, 4096);
+							filtered.Flush ();
+						}
 
-				using (var filtered = new FilteredStream (memory)) {
-					filtered.Add (new Unix2DosFilter ());
-					stream.CopyTo (filtered, 4096);
+						Response = memory.ToArray ();
+					}
 				}
+			}
 
-				Response = memory.ToArray ();
+			if (compressed) {
+				using (var memory = new MemoryStream ()) {
+					using (var compress = new CompressedStream (memory)) {
+						compress.Write (CommandBuffer, 0, CommandBuffer.Length);
+						compress.Flush ();
+
+						CommandBuffer = memory.ToArray ();
+					}
+				}
 			}
 		}
 
-		public ImapReplayCommand (string command, ImapReplayCommandResponse response)
+		public ImapReplayCommand (string command, ImapReplayCommandResponse response, bool compressed = false) : this (Latin1, command, response, compressed)
 		{
+		}
+
+		public ImapReplayCommand (Encoding encoding, string command, ImapReplayCommandResponse response, bool compressed = false)
+		{
+			CommandBuffer = encoding.GetBytes (command);
+			Compressed = compressed;
+			Encoding = encoding;
+			Command = command;
+
+			string text;
+
 			if (response == ImapReplayCommandResponse.Plus) {
-				Response = Encoding.ASCII.GetBytes ("+\r\n");
-				Command = command;
-				return;
+				text = "+\r\n";
+			} else {
+				var tokens = command.Split (' ');
+				var cmd = (tokens [1] == "UID" ? tokens [2] : tokens [1]).TrimEnd ();
+				var tag = tokens [0];
+
+				text = string.Format ("{0} {1} {2} {3}\r\n", tag, response, cmd, response == ImapReplayCommandResponse.OK ? "completed" : "failed");
 			}
 
-			var tokens = command.Split (' ');
-			var cmd = (tokens[1] == "UID" ? tokens[2] : tokens[1]).TrimEnd ();
-			var tag = tokens[0];
+			if (compressed) {
+				using (var memory = new MemoryStream ()) {
+					using (var compress = new CompressedStream (memory)) {
+						var buffer = encoding.GetBytes (text);
 
-			var text = string.Format ("{0} {1} {2} completed\r\n", tag, response, cmd);
-			Response = Encoding.ASCII.GetBytes (text);
-			Command = command;
+						compress.Write (buffer, 0, buffer.Length);
+						compress.Flush ();
+
+						Response = memory.ToArray ();
+					}
+				}
+
+				using (var memory = new MemoryStream ()) {
+					using (var compress = new CompressedStream (memory)) {
+						compress.Write (CommandBuffer, 0, CommandBuffer.Length);
+						compress.Flush ();
+
+						CommandBuffer = memory.ToArray ();
+					}
+				}
+			} else {
+				Response = encoding.GetBytes (text);
+			}
 		}
 	}
 
@@ -96,7 +313,6 @@ namespace UnitTests.Net.Imap {
 
 	class ImapReplayStream : Stream
 	{
-		static readonly Encoding Latin1 = Encoding.GetEncoding (28591);
 		readonly MemoryStream sent = new MemoryStream ();
 		readonly IList<ImapReplayCommand> commands;
 		readonly bool testUnixFormat;
@@ -106,9 +322,10 @@ namespace UnitTests.Net.Imap {
 		bool disposed;
 		bool asyncIO;
 		bool isAsync;
+		bool done;
 		int index;
 
-		public ImapReplayStream (IList<ImapReplayCommand> commands, bool asyncIO, bool testUnixFormat)
+		public ImapReplayStream (IList<ImapReplayCommand> commands, bool asyncIO, bool testUnixFormat = false)
 		{
 			stream = GetResponseStream (commands[0]);
 			state = ImapReplayState.SendResponse;
@@ -171,7 +388,10 @@ namespace UnitTests.Net.Imap {
 			}
 
 			if (state != ImapReplayState.SendResponse) {
-				var command = Latin1.GetString (sent.GetBuffer (), 0, (int) sent.Length);
+				if (index >= commands.Count)
+					return 0;
+
+				var command = GetSentCommand ();
 
 				Assert.AreEqual (ImapReplayState.SendResponse, state, "Trying to read before command received. Sent so far: {0}", command);
 			}
@@ -202,7 +422,7 @@ namespace UnitTests.Net.Imap {
 		{
 			MemoryStream memory;
 
-			if (testUnixFormat) {
+			if (testUnixFormat && !command.Compressed) {
 				memory = new MemoryStream ();
 
 				using (var filtered = new FilteredStream (memory)) {
@@ -219,22 +439,44 @@ namespace UnitTests.Net.Imap {
 			return memory;
 		}
 
+		string GetSentCommand ()
+		{
+			if (!commands[index].Compressed)
+				return commands[index].Encoding.GetString (sent.GetBuffer (), 0, (int) sent.Length);
+
+			using (var memory = new MemoryStream (sent.GetBuffer (), 0, (int) sent.Length)) {
+				using (var compressed = new CompressedStream (memory)) {
+					using (var decompressed = new MemoryStream ()) {
+						compressed.CopyTo (decompressed, 4096);
+
+						return commands[index].Encoding.GetString (decompressed.GetBuffer (), 0, (int) decompressed.Length);
+					}
+				}
+			}
+		}
+
 		public override void Write (byte[] buffer, int offset, int count)
 		{
 			CheckDisposed ();
 
 			if (asyncIO) {
-				Assert.IsTrue (isAsync, "Trying to Write in an async unit test.");
+				if (count != 6 || Encoding.ASCII.GetString (buffer, offset, count) != "DONE\r\n")
+					Assert.IsTrue (isAsync, "Trying to Write in an async unit test.");
+				else
+					done = true;
 			} else {
-				Assert.IsFalse (isAsync, "Trying to WriteAsync in a non-async unit test.");
+				if (count != 6 || Encoding.ASCII.GetString (buffer, offset, count) != "DONE\r\n")
+					Assert.IsFalse (isAsync, "Trying to WriteAsync in a non-async unit test.");
+				else
+					done = true;
 			}
 
 			Assert.AreEqual (ImapReplayState.WaitForCommand, state, "Trying to write when a command has already been given.");
 
 			sent.Write (buffer, offset, count);
 
-			if (sent.Length >= commands[index].Command.Length) {
-				var command = Latin1.GetString (sent.GetBuffer (), 0, (int) sent.Length);
+			if (sent.Length >= commands[index].CommandBuffer.Length) {
+				var command = GetSentCommand ();
 
 				Assert.AreEqual (commands[index].Command, command, "Commands did not match.");
 
@@ -263,14 +505,16 @@ namespace UnitTests.Net.Imap {
 		{
 			CheckDisposed ();
 
-			Assert.IsFalse (asyncIO, "Trying to Flush in an async unit test.");
+			Assert.IsFalse (asyncIO && !done, "Trying to Flush in an async unit test.");
+			done = false;
 		}
 
 		public override Task FlushAsync (CancellationToken cancellationToken)
 		{
 			CheckDisposed ();
 
-			Assert.IsTrue (asyncIO, "Trying to FlushAsync in a non-async unit test.");
+			Assert.IsTrue (asyncIO || done, "Trying to FlushAsync in a non-async unit test.");
+			done = false;
 
 			return Task.FromResult (true);
 		}

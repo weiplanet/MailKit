@@ -6,7 +6,7 @@
 //
 // Copyright (c) 2003 Motus Technologies Inc. (http://www.motus.com)
 // Copyright (c) 2004-2005, 2010 Novell, Inc (http://www.novell.com)
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
@@ -315,6 +315,9 @@ namespace MailKit.Security.Ntlm {
 
 		public byte[] ComputeHash (Stream inputStream)
 		{
+			if (inputStream == null)
+				throw new ArgumentNullException (nameof (inputStream));
+
 			// don't read stream unless object is ready to use
 			if (disposed)
 				throw new ObjectDisposedException (nameof (MD4));

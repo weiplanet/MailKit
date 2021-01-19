@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -36,7 +36,8 @@ namespace MailKit {
 	/// An interface for retreiving messages from a spool.
 	/// </summary>
 	/// <remarks>
-	/// An interface for retreiving messages from a spool.
+	/// <para>An interface for retreiving messages from a spool.</para>
+	/// <para>Implemented by <see cref="MailKit.Net.Pop3.Pop3Client"/>.</para>
 	/// </remarks>
 	public interface IMailSpool : IMailService, IEnumerable<MimeMessage>
 	{
@@ -64,6 +65,16 @@ namespace MailKit {
 		/// </remarks>
 		/// <value><c>true</c> if supports uids; otherwise, <c>false</c>.</value>
 		bool SupportsUids { get; }
+
+		/// <summary>
+		/// Get the message count.
+		/// </summary>
+		/// <remarks>
+		/// Gets the message count.
+		/// </remarks>
+		/// <returns>The message count.</returns>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		int GetMessageCount (CancellationToken cancellationToken = default (CancellationToken));
 
 		/// <summary>
 		/// Get the UID of the message at the specified index.

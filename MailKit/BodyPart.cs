@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -95,13 +95,7 @@ namespace MailKit {
 		/// <exception cref="System.ArgumentNullException">
 		/// <paramref name="visitor"/> is <c>null</c>.
 		/// </exception>
-		public virtual void Accept (BodyPartVisitor visitor)
-		{
-			if (visitor == null)
-				throw new ArgumentNullException (nameof (visitor));
-
-			visitor.VisitBodyPart (this);
-		}
+		public abstract void Accept (BodyPartVisitor visitor);
 
 		internal static void Encode (StringBuilder builder, uint value)
 		{
@@ -356,6 +350,7 @@ namespace MailKit {
 			if (index >= text.Length || text[index] != ')')
 				return false;
 
+			values = list.ToArray ();
 			index++;
 
 			return true;

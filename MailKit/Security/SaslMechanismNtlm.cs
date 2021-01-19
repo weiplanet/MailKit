@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -61,6 +61,7 @@ namespace MailKit.Security {
 		[Obsolete ("Use SaslMechanismNtlm(NetworkCredential) instead.")]
 		public SaslMechanismNtlm (Uri uri, ICredentials credentials) : base (uri, credentials)
 		{
+			Level = NtlmAuthLevel.NTLMv2_only;
 		}
 
 		/// <summary>
@@ -82,6 +83,7 @@ namespace MailKit.Security {
 		[Obsolete ("Use SaslMechanismNtlm(string, string) instead.")]
 		public SaslMechanismNtlm (Uri uri, string userName, string password) : base (uri, userName, password)
 		{
+			Level = NtlmAuthLevel.NTLMv2_only;
 		}
 
 		/// <summary>
@@ -96,6 +98,7 @@ namespace MailKit.Security {
 		/// </exception>
 		public SaslMechanismNtlm (NetworkCredential credentials) : base (credentials)
 		{
+			Level = NtlmAuthLevel.NTLMv2_only;
 		}
 
 		/// <summary>
@@ -113,6 +116,7 @@ namespace MailKit.Security {
 		/// </exception>
 		public SaslMechanismNtlm (string userName, string password) : base (userName, password)
 		{
+			Level = NtlmAuthLevel.NTLMv2_only;
 		}
 
 		/// <summary>
@@ -138,6 +142,31 @@ namespace MailKit.Security {
 			get { return true; }
 		}
 
+		internal NtlmAuthLevel Level {
+			get; set;
+		}
+
+		/// <summary>
+		/// Gets or sets the Windows OS version to use in the NTLM negotiation (used for debuigging purposes).
+		/// </summary>
+		/// <remarks>
+		/// Gets or sets the Windows OS version to use in the NTLM negotiation (used for debuigging purposes).
+		/// </remarks>
+		public Version OSVersion {
+			get; set;
+		}
+
+		/// <summary>
+		/// Gets or sets the workstation name to use for authentication.
+		/// </summary>
+		/// <remarks>
+		/// Gets or sets the workstation name to use for authentication.
+		/// </remarks>
+		/// <value>The workstation name.</value>
+		public string Workstation {
+			get; set;
+		}
+
 		/// <summary>
 		/// Parses the server's challenge token and returns the next challenge response.
 		/// </summary>
@@ -157,12 +186,11 @@ namespace MailKit.Security {
 		protected override byte[] Challenge (byte[] token, int startIndex, int length)
 		{
 			if (IsAuthenticated)
-				throw new InvalidOperationException ();
+				return null;
 
-			string password = Credentials.Password ?? string.Empty;
 			string userName = Credentials.UserName;
 			string domain = Credentials.Domain;
-			MessageBase message;
+			MessageBase message = null;
 
 			if (string.IsNullOrEmpty (domain)) {
 				int index = userName.IndexOf ('\\');
@@ -177,35 +205,24 @@ namespace MailKit.Security {
 
 			switch (state) {
 			case LoginState.Initial:
-				message = GetInitialResponse (domain);
+				message = new Type1Message (Workstation, domain, OSVersion);
 				state = LoginState.Challenge;
 				break;
 			case LoginState.Challenge:
-				message = GetChallengeResponse (userName, password, domain, token, startIndex, length);
+				var password = Credentials.Password ?? string.Empty;
+				message = GetChallengeResponse (userName, password, token, startIndex, length);
 				IsAuthenticated = true;
 				break;
-			default:
-				throw new IndexOutOfRangeException ("state");
 			}
 
-			return message.Encode ();
+			return message?.Encode ();
 		}
 
-		static MessageBase GetInitialResponse (string domain)
-		{
-			return new Type1Message (string.Empty, domain);
-		}
-
-		static MessageBase GetChallengeResponse (string userName, string password, string domain, byte[] token, int startIndex, int length)
+		MessageBase GetChallengeResponse (string userName, string password, byte[] token, int startIndex, int length)
 		{
 			var type2 = new Type2Message (token, startIndex, length);
-			var type3 = new Type3Message (type2, userName, string.Empty);
-			type3.Password = password;
 
-			if (!string.IsNullOrEmpty (domain))
-				type3.Domain = domain;
-
-			return type3;
+			return new Type3Message (type2, OSVersion, Level, userName, password, Workstation);
 		}
 
 		/// <summary>

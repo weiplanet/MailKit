@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -43,6 +43,11 @@ namespace MailKit.Search {
 		/// expressions.
 		/// </summary>
 		And,
+
+		/// <summary>
+		/// A search term that matches messages that have the specified annotation.
+		/// </summary>
+		Annotation,
 
 		/// <summary>
 		/// A search term that matches answered messages.
@@ -209,14 +214,31 @@ namespace MailKit.Search {
 		Recent,
 
 		/// <summary>
+		/// A search term that matches all messages in the mailbox when the underlying storage of
+		/// that mailbox supports the save date attribute. Conversely, it matches no messages in
+		/// the mailbox when the save date attribute is not supported.
+		/// </summary>
+		SaveDateSupported,
+
+		/// <summary>
+		/// A search term that matches messages that were saved to the mailbox before a specified date.
+		/// </summary>
+		SavedBefore,
+
+		/// <summary>
+		/// A search term that matches messages that were saved to the mailbox on a specified date.
+		/// </summary>
+		SavedOn,
+
+		/// <summary>
+		/// A search term that matches messages that were saved to the mailbox since a specified date.
+		/// </summary>
+		SavedSince,
+
+		/// <summary>
 		/// A search term that matches messages that have been seen.
 		/// </summary>
 		Seen,
-
-		/// <summary>
-		/// A search term that matches messages that were sent after a specified date.
-		/// </summary>
-		SentAfter,
 
 		/// <summary>
 		/// A search term that matches messages that were sent before a specified date.
@@ -227,6 +249,11 @@ namespace MailKit.Search {
 		/// A search term that matches messages that were sent on a specified date.
 		/// </summary>
 		SentOn,
+
+		/// <summary>
+		/// A search term that matches messages that were sent since a specified date.
+		/// </summary>
+		SentSince,
 
 		/// <summary>
 		/// A search term that matches messages that are smaller than a

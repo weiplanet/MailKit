@@ -50,8 +50,8 @@
           to encapsulate encrypted data. To encrypt any
           <codeEntityReference>T:MimeKit.MimeEntity</codeEntityReference>,
           use the
-          <codeEntityReference autoUpgrade="true" linkText="MultipartEncrypted.Create">
-            Overload:MimeKit.Cryptography.MultipartEncrypted.Create
+          <codeEntityReference autoUpgrade="true" linkText="MultipartEncrypted.Encrypt">
+            Overload:MimeKit.Cryptography.MultipartEncrypted.Encrypt
           </codeEntityReference>
           method:
         </para>
@@ -85,7 +85,7 @@
         <para>
           The first thing you must do is find the
           <codeEntityReference>T:MimeKit.Cryptography.MultipartEncrypted</codeEntityReference>
-          part (see the section on <link xlink:href="WorkingWithMessages#TraversingMessages"/>).
+          part (see the section on <link xlink:href="Working-With-Messages#TraversingMessages"/>).
         </para>
         <code language="c#" source="Examples\OpenPGPExamples.cs" region="Decrypt"/>
       </content>

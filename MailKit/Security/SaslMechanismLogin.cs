@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,10 +27,6 @@
 using System;
 using System.Net;
 using System.Text;
-
-#if NETFX_CORE
-using Encoding = Portable.Text.Encoding;
-#endif
 
 namespace MailKit.Security {
 	/// <summary>
@@ -119,9 +115,8 @@ namespace MailKit.Security {
 		/// <para><paramref name="credentials"/> is <c>null</c>.</para>
 		/// </exception>
 		[Obsolete ("Use SaslMechanismLogin(NetworkCredential) instead.")]
-		public SaslMechanismLogin (Uri uri, ICredentials credentials) : base (uri, credentials)
+		public SaslMechanismLogin (Uri uri, ICredentials credentials) : this (uri, Encoding.UTF8, credentials)
 		{
-			encoding = Encoding.UTF8;
 		}
 
 		/// <summary>
@@ -141,9 +136,8 @@ namespace MailKit.Security {
 		/// <para><paramref name="password"/> is <c>null</c>.</para>
 		/// </exception>
 		[Obsolete ("Use SaslMechanismLogin(string, string) instead.")]
-		public SaslMechanismLogin (Uri uri, string userName, string password) : base (uri, userName, password)
+		public SaslMechanismLogin (Uri uri, string userName, string password) : this (uri, Encoding.UTF8, userName, password)
 		{
-			encoding = Encoding.UTF8;
 		}
 
 		/// <summary>
@@ -201,9 +195,8 @@ namespace MailKit.Security {
 		/// <exception cref="System.ArgumentNullException">
 		/// <paramref name="credentials"/> is <c>null</c>.
 		/// </exception>
-		public SaslMechanismLogin (NetworkCredential credentials) : base (credentials)
+		public SaslMechanismLogin (NetworkCredential credentials) : this (Encoding.UTF8, credentials)
 		{
-			encoding = Encoding.UTF8;
 		}
 
 		/// <summary>
@@ -219,9 +212,8 @@ namespace MailKit.Security {
 		/// <para>-or-</para>
 		/// <para><paramref name="password"/> is <c>null</c>.</para>
 		/// </exception>
-		public SaslMechanismLogin (string userName, string password) : base (userName, password)
+		public SaslMechanismLogin (string userName, string password) : this (Encoding.UTF8, userName, password)
 		{
-			encoding = Encoding.UTF8;
 		}
 
 		/// <summary>
@@ -268,13 +260,16 @@ namespace MailKit.Security {
 		/// </exception>
 		protected override byte[] Challenge (byte[] token, int startIndex, int length)
 		{
-			byte[] challenge;
+			if (IsAuthenticated)
+				return null;
 
-			if (token == null)
-				throw new NotSupportedException ("LOGIN does not support SASL-IR.");
+			byte[] challenge = null;
 
 			switch (state) {
 			case LoginState.UserName:
+				if (token == null)
+					throw new NotSupportedException ("LOGIN does not support SASL-IR.");
+
 				challenge = encoding.GetBytes (Credentials.UserName);
 				state = LoginState.Password;
 				break;
@@ -282,8 +277,6 @@ namespace MailKit.Security {
 				challenge = encoding.GetBytes (Credentials.Password);
 				IsAuthenticated = true;
 				break;
-			default:
-				throw new InvalidOperationException ();
 			}
 
 			return challenge;

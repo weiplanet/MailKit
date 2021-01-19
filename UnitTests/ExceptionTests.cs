@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -30,12 +30,9 @@ using System.Runtime.Serialization.Formatters.Binary;
 
 using NUnit.Framework;
 
-using MimeKit;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Net.Pop3;
-using MailKit.Net.Smtp;
-using MailKit.Security;
 
 namespace UnitTests
 {
@@ -55,6 +52,34 @@ namespace UnitTests
 				var ex = (FolderNotFoundException) formatter.Deserialize (stream);
 				Assert.AreEqual (expected.FolderName, ex.FolderName, "Unexpected FolderName.");
 			}
+
+			expected = new FolderNotFoundException ("This is the error message.", "Inbox");
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (FolderNotFoundException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
+				Assert.AreEqual (expected.FolderName, ex.FolderName, "Unexpected FolderName.");
+			}
+
+			expected = new FolderNotFoundException ("This is the error message.", "Inbox", new IOException ("Inner Exception"));
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (FolderNotFoundException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
+				Assert.AreEqual (expected.FolderName, ex.FolderName, "Unexpected FolderName.");
+			}
+
+			Assert.Throws<ArgumentNullException> (() => new FolderNotFoundException (null));
+			Assert.Throws<ArgumentNullException> (() => new FolderNotFoundException ("message", null));
+			Assert.Throws<ArgumentNullException> (() => new FolderNotFoundException ("message", null, new Exception ("message")));
 		}
 
 		[Test]
@@ -70,6 +95,134 @@ namespace UnitTests
 				var ex = (FolderNotOpenException) formatter.Deserialize (stream);
 				Assert.AreEqual (expected.FolderName, ex.FolderName, "Unexpected FolderName.");
 				Assert.AreEqual (expected.FolderAccess, ex.FolderAccess, "Unexpected FolderAcess.");
+			}
+
+			expected = new FolderNotOpenException ("Inbox", FolderAccess.ReadWrite, "This is the error message.");
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (FolderNotOpenException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.FolderName, ex.FolderName, "Unexpected FolderName.");
+				Assert.AreEqual (expected.FolderAccess, ex.FolderAccess, "Unexpected FolderAcess.");
+			}
+
+			expected = new FolderNotOpenException ("Inbox", FolderAccess.ReadWrite, "This is the error message.", new IOException ("Inner Exception"));
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (FolderNotOpenException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.FolderName, ex.FolderName, "Unexpected FolderName.");
+				Assert.AreEqual (expected.FolderAccess, ex.FolderAccess, "Unexpected FolderAcess.");
+			}
+
+			Assert.Throws<ArgumentNullException> (() => new FolderNotOpenException (null, FolderAccess.ReadOnly));
+			Assert.Throws<ArgumentNullException> (() => new FolderNotOpenException (null, FolderAccess.ReadOnly, "message"));
+			Assert.Throws<ArgumentNullException> (() => new FolderNotOpenException (null, FolderAccess.ReadOnly, "message", new Exception ("message")));
+		}
+
+		[Test]
+		public void TestMessageNotFoundException ()
+		{
+			var expected = new MessageNotFoundException ("This is the message.");
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (MessageNotFoundException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
+			}
+
+			expected = new MessageNotFoundException ("This is the message.", new IOException ("Inner Exception"));
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (MessageNotFoundException)formatter.Deserialize (stream);
+				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
+			}
+		}
+
+		[Test]
+		public void TestServiceNotAuthenticatedException ()
+		{
+			var expected = new ServiceNotAuthenticatedException ();
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (ServiceNotAuthenticatedException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
+			}
+
+			expected = new ServiceNotAuthenticatedException ("This is the message.");
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (ServiceNotAuthenticatedException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
+			}
+
+			expected = new ServiceNotAuthenticatedException ("This is the message.", new IOException ("Inner Exception"));
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (ServiceNotAuthenticatedException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
+			}
+		}
+
+		[Test]
+		public void TestServiceNotConnectedException ()
+		{
+			var expected = new ServiceNotConnectedException ();
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (ServiceNotConnectedException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
+			}
+
+			expected = new ServiceNotConnectedException ("This is the message.");
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (ServiceNotConnectedException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
+			}
+
+			expected = new ServiceNotConnectedException ("This is the message.", new IOException ("Inner Exception"));
+
+			using (var stream = new MemoryStream ()) {
+				var formatter = new BinaryFormatter ();
+				formatter.Serialize (stream, expected);
+				stream.Position = 0;
+
+				var ex = (ServiceNotConnectedException) formatter.Deserialize (stream);
+				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
 			}
 		}
 
@@ -189,70 +342,6 @@ namespace UnitTests
 				stream.Position = 0;
 
 				var ex = (Pop3ProtocolException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
-			}
-		}
-
-		static void TestSmtpCommandException (SmtpCommandException expected)
-		{
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SmtpCommandException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.ErrorCode, ex.ErrorCode, "Unexpected ErrorCode.");
-				Assert.AreEqual (expected.StatusCode, ex.StatusCode, "Unexpected StatusCode.");
-
-				if (expected.Mailbox != null)
-					Assert.IsTrue (expected.Mailbox.Equals (ex.Mailbox), "Unexpected Mailbox.");
-				else
-					Assert.IsNull (ex.Mailbox, "Expected Mailbox to be null.");
-			}
-		}
-
-		[Test]
-		public void TestSmtpCommandException ()
-		{
-			TestSmtpCommandException (new SmtpCommandException (SmtpErrorCode.RecipientNotAccepted, SmtpStatusCode.MailboxUnavailable,
-			                                                    new MailboxAddress ("Unit Tests", "example@mimekit.net"), "Message"));
-			TestSmtpCommandException (new SmtpCommandException (SmtpErrorCode.MessageNotAccepted, SmtpStatusCode.InsufficientStorage,
-			                                                    "Message"));
-		}
-
-		[Test]
-		public void TestSmtpProtocolException ()
-		{
-			var expected = new SmtpProtocolException ("Bad boys, bad boys. Whatcha gonna do?", new Exception ("InnerException"));
-
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SmtpProtocolException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
-			}
-
-			expected = new SmtpProtocolException ("Bad boys, bad boys. Whatcha gonna do?");
-
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SmtpProtocolException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
-			}
-
-			expected = new SmtpProtocolException ();
-
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SmtpProtocolException) formatter.Deserialize (stream);
 				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
 			}
 		}

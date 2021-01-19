@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -93,6 +93,22 @@ namespace MailKit {
 		/// </remarks>
 		/// <value><c>true</c> if the mail store supports quotas; otherwise, <c>false</c>.</value>
 		public abstract bool SupportsQuotas {
+			get;
+		}
+
+		/// <summary>
+		/// Get the threading algorithms supported by the mail store.
+		/// </summary>
+		/// <remarks>
+		/// The threading algorithms are queried as part of the
+		/// <a href="Overload_MailKit_MailStore_Connect.htm">Connect</a>
+		/// and <a href="Overload_MailKit_MailStore_Authenticate.htm">Authenticate</a> methods.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ImapExamples.cs" region="Capabilities"/>
+		/// </example>
+		/// <value>The supported threading algorithms.</value>
+		public abstract HashSet<ThreadingAlgorithm> ThreadingAlgorithms {
 			get;
 		}
 
@@ -481,13 +497,13 @@ namespace MailKit {
 		/// <param name="tag">The metadata tag.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="IMailStore"/> has been disposed.
+		/// The <see cref="MailStore"/> has been disposed.
 		/// </exception>
 		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="IMailStore"/> is not connected.
+		/// The <see cref="MailStore"/> is not connected.
 		/// </exception>
 		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="IMailStore"/> is not authenticated.
+		/// The <see cref="MailStore"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
 		/// The folder does not support metadata.
@@ -516,13 +532,13 @@ namespace MailKit {
 		/// <param name="tag">The metadata tag.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="IMailStore"/> has been disposed.
+		/// The <see cref="MailStore"/> has been disposed.
 		/// </exception>
 		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="IMailStore"/> is not connected.
+		/// The <see cref="MailStore"/> is not connected.
 		/// </exception>
 		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="IMailStore"/> is not authenticated.
+		/// The <see cref="MailStore"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
 		/// The folder does not support metadata.
@@ -554,13 +570,13 @@ namespace MailKit {
 		/// <paramref name="tags"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="IMailStore"/> has been disposed.
+		/// The <see cref="MailStore"/> has been disposed.
 		/// </exception>
 		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="IMailStore"/> is not connected.
+		/// The <see cref="MailStore"/> is not connected.
 		/// </exception>
 		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="IMailStore"/> is not authenticated.
+		/// The <see cref="MailStore"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
 		/// The folder does not support metadata.
@@ -595,13 +611,13 @@ namespace MailKit {
 		/// <paramref name="tags"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="IMailStore"/> has been disposed.
+		/// The <see cref="MailStore"/> has been disposed.
 		/// </exception>
 		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="IMailStore"/> is not connected.
+		/// The <see cref="MailStore"/> is not connected.
 		/// </exception>
 		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="IMailStore"/> is not authenticated.
+		/// The <see cref="MailStore"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
 		/// The folder does not support metadata.
@@ -639,13 +655,13 @@ namespace MailKit {
 		/// <para><paramref name="tags"/> is <c>null</c>.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="IMailStore"/> has been disposed.
+		/// The <see cref="MailStore"/> has been disposed.
 		/// </exception>
 		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="IMailStore"/> is not connected.
+		/// The <see cref="MailStore"/> is not connected.
 		/// </exception>
 		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="IMailStore"/> is not authenticated.
+		/// The <see cref="MailStore"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
 		/// The folder does not support metadata.
@@ -680,13 +696,13 @@ namespace MailKit {
 		/// <para><paramref name="tags"/> is <c>null</c>.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="IMailStore"/> has been disposed.
+		/// The <see cref="MailStore"/> has been disposed.
 		/// </exception>
 		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="IMailStore"/> is not connected.
+		/// The <see cref="MailStore"/> is not connected.
 		/// </exception>
 		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="IMailStore"/> is not authenticated.
+		/// The <see cref="MailStore"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
 		/// The folder does not support metadata.
@@ -717,13 +733,13 @@ namespace MailKit {
 		/// <paramref name="metadata"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="IMailStore"/> has been disposed.
+		/// The <see cref="MailStore"/> has been disposed.
 		/// </exception>
 		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="IMailStore"/> is not connected.
+		/// The <see cref="MailStore"/> is not connected.
 		/// </exception>
 		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="IMailStore"/> is not authenticated.
+		/// The <see cref="MailStore"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
 		/// The folder does not support metadata.
@@ -755,13 +771,13 @@ namespace MailKit {
 		/// <paramref name="metadata"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="IMailStore"/> has been disposed.
+		/// The <see cref="MailStore"/> has been disposed.
 		/// </exception>
 		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="IMailStore"/> is not connected.
+		/// The <see cref="MailStore"/> is not connected.
 		/// </exception>
 		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="IMailStore"/> is not authenticated.
+		/// The <see cref="MailStore"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
 		/// The folder does not support metadata.
@@ -805,6 +821,52 @@ namespace MailKit {
 
 			if (handler != null)
 				handler (this, new AlertEventArgs (message));
+		}
+
+		/// <summary>
+		/// Occurs when a folder is created.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="FolderCreated"/> event is emitted when a new folder is created.
+		/// </remarks>
+		public event EventHandler<FolderCreatedEventArgs> FolderCreated;
+
+		/// <summary>
+		/// Raise the folder created event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the folder created event.
+		/// </remarks>
+		/// <param name="folder">The folder that was just created.</param>
+		protected virtual void OnFolderCreated (IMailFolder folder)
+		{
+			var handler = FolderCreated;
+
+			if (handler != null)
+				handler (this, new FolderCreatedEventArgs (folder));
+		}
+
+		/// <summary>
+		/// Occurs when metadata changes.
+		/// </summary>
+		/// <remarks>
+		/// The <see cref="MetadataChanged"/> event is emitted when metadata changes.
+		/// </remarks>
+		public event EventHandler<MetadataChangedEventArgs> MetadataChanged;
+
+		/// <summary>
+		/// Raise the metadata changed event.
+		/// </summary>
+		/// <remarks>
+		/// Raises the metadata changed event.
+		/// </remarks>
+		/// <param name="metadata">The metadata that changed.</param>
+		protected virtual void OnMetadataChanged (Metadata metadata)
+		{
+			var handler = MetadataChanged;
+
+			if (handler != null)
+				handler (this, new MetadataChangedEventArgs (metadata));
 		}
 	}
 }

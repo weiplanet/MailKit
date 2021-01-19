@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,19 +25,13 @@
 //
 
 using System;
-using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
-using System.Diagnostics;
 using System.Globalization;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 
-using MimeKit;
-using MimeKit.IO;
-using MimeKit.Utils;
 using MailKit.Search;
 
 namespace MailKit.Net.Imap
@@ -59,15 +53,48 @@ namespace MailKit.Net.Imap
 			return date.ToString ("d-MMM-yyyy", CultureInfo.InvariantCulture);
 		}
 
-		void BuildQuery (StringBuilder builder, SearchQuery query, List<string> args, bool parens, ref bool ascii)
+		bool IsBadCharset (ImapCommand ic, string charset)
 		{
-			TextSearchQuery text = null;
+			// Note: if `charset` is null, then the charset is actually US-ASCII...
+			return ic.Response == ImapCommandResponse.No &&
+				ic.RespCodes.Any (rc => rc.Type == ImapResponseCodeType.BadCharset) &&
+				charset != null && !Engine.SupportedCharsets.Contains (charset);
+		}
+
+		void AddTextArgument (StringBuilder builder, List<object> args, string text, ref string charset)
+		{
+			if (IsAscii (text)) {
+				builder.Append ("%S");
+				args.Add (text);
+				return;
+			}
+
+			if (Engine.SupportedCharsets.Contains ("UTF-8")) {
+				builder.Append ("%S");
+				charset = "UTF-8";
+				args.Add (text);
+				return;
+			}
+
+			// force the text into US-ASCII...
+			var buffer = new byte[text.Length];
+			for (int i = 0; i < text.Length; i++)
+				buffer[i] = (byte) text[i];
+
+			builder.Append ("%L");
+			args.Add (buffer);
+		}
+
+		void BuildQuery (StringBuilder builder, SearchQuery query, List<object> args, bool parens, ref string charset)
+		{
+			AnnotationSearchQuery annotation;
 			NumericSearchQuery numeric;
 			FilterSearchQuery filter;
 			HeaderSearchQuery header;
 			BinarySearchQuery binary;
 			UnarySearchQuery unary;
 			DateSearchQuery date;
+			TextSearchQuery text;
 			UidSearchQuery uid;
 
 			switch (query.Term) {
@@ -78,29 +105,37 @@ namespace MailKit.Net.Imap
 				binary = (BinarySearchQuery) query;
 				if (parens)
 					builder.Append ('(');
-				BuildQuery (builder, binary.Left, args, false, ref ascii);
+				BuildQuery (builder, binary.Left, args, false, ref charset);
 				builder.Append (' ');
-				BuildQuery (builder, binary.Right, args, false, ref ascii);
+				BuildQuery (builder, binary.Right, args, false, ref charset);
 				if (parens)
 					builder.Append (')');
+				break;
+			case SearchTerm.Annotation:
+				if ((Engine.Capabilities & ImapCapabilities.Annotate) == 0)
+					throw new NotSupportedException ("The ANNOTATION search term is not supported by the IMAP server.");
+
+				annotation = (AnnotationSearchQuery) query;
+				builder.AppendFormat ("ANNOTATION {0} {1} %S", annotation.Entry, annotation.Attribute);
+				args.Add (annotation.Value);
 				break;
 			case SearchTerm.Answered:
 				builder.Append ("ANSWERED");
 				break;
 			case SearchTerm.BccContains:
 				text = (TextSearchQuery) query;
-				builder.Append ("BCC %S");
-				args.Add (text.Text);
+				builder.Append ("BCC ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			case SearchTerm.BodyContains:
 				text = (TextSearchQuery) query;
-				builder.Append ("BODY %S");
-				args.Add (text.Text);
+				builder.Append ("BODY ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			case SearchTerm.CcContains:
 				text = (TextSearchQuery) query;
-				builder.Append ("CC %S");
-				args.Add (text.Text);
+				builder.Append ("CC ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			case SearchTerm.Deleted:
 				builder.Append ("DELETED");
@@ -133,8 +168,8 @@ namespace MailKit.Net.Imap
 				break;
 			case SearchTerm.FromContains:
 				text = (TextSearchQuery) query;
-				builder.Append ("FROM %S");
-				args.Add (text.Text);
+				builder.Append ("FROM ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			case SearchTerm.Fuzzy:
 				if ((Engine.Capabilities & ImapCapabilities.FuzzySearch) == 0)
@@ -142,30 +177,30 @@ namespace MailKit.Net.Imap
 
 				builder.Append ("FUZZY ");
 				unary = (UnarySearchQuery) query;
-				BuildQuery (builder, unary.Operand, args, true, ref ascii);
+				BuildQuery (builder, unary.Operand, args, true, ref charset);
 				break;
 			case SearchTerm.HeaderContains:
 				header = (HeaderSearchQuery) query;
-				builder.AppendFormat ("HEADER {0} %S", header.Field);
-				args.Add (header.Value);
+				builder.AppendFormat ("HEADER {0} ", header.Field);
+				AddTextArgument (builder, args, header.Value, ref charset);
 				break;
 			case SearchTerm.Keyword:
 				text = (TextSearchQuery) query;
-				builder.Append ("KEYWORD %S");
-				args.Add (text.Text);
+				builder.Append ("KEYWORD ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			case SearchTerm.LargerThan:
 				numeric = (NumericSearchQuery) query;
-				builder.AppendFormat ("LARGER {0}", numeric.Value);
+				builder.AppendFormat (CultureInfo.InvariantCulture, "LARGER {0}", numeric.Value);
 				break;
 			case SearchTerm.MessageContains:
 				text = (TextSearchQuery) query;
-				builder.Append ("TEXT %S");
-				args.Add (text.Text);
+				builder.Append ("TEXT ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			case SearchTerm.ModSeq:
 				numeric = (NumericSearchQuery) query;
-				builder.AppendFormat ("MODSEQ {0}", numeric.Value);
+				builder.AppendFormat (CultureInfo.InvariantCulture, "MODSEQ {0}", numeric.Value);
 				break;
 			case SearchTerm.New:
 				builder.Append ("NEW");
@@ -173,7 +208,7 @@ namespace MailKit.Net.Imap
 			case SearchTerm.Not:
 				builder.Append ("NOT ");
 				unary = (UnarySearchQuery) query;
-				BuildQuery (builder, unary.Operand, args, true, ref ascii);
+				BuildQuery (builder, unary.Operand, args, true, ref charset);
 				break;
 			case SearchTerm.NotAnswered:
 				builder.Append ("UNANSWERED");
@@ -189,8 +224,8 @@ namespace MailKit.Net.Imap
 				break;
 			case SearchTerm.NotKeyword:
 				text = (TextSearchQuery) query;
-				builder.Append ("UNKEYWORD %S");
-				args.Add (text.Text);
+				builder.Append ("UNKEYWORD ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			case SearchTerm.NotRecent:
 				builder.Append ("OLD");
@@ -203,24 +238,47 @@ namespace MailKit.Net.Imap
 					throw new NotSupportedException ("The OLDER search term is not supported by the IMAP server.");
 
 				numeric = (NumericSearchQuery) query;
-				builder.AppendFormat ("OLDER {0}", numeric.Value);
+				builder.AppendFormat (CultureInfo.InvariantCulture, "OLDER {0}", numeric.Value);
 				break;
 			case SearchTerm.Or:
 				builder.Append ("OR ");
 				binary = (BinarySearchQuery) query;
-				BuildQuery (builder, binary.Left, args, true, ref ascii);
+				BuildQuery (builder, binary.Left, args, true, ref charset);
 				builder.Append (' ');
-				BuildQuery (builder, binary.Right, args, true, ref ascii);
+				BuildQuery (builder, binary.Right, args, true, ref charset);
 				break;
 			case SearchTerm.Recent:
 				builder.Append ("RECENT");
 				break;
+			case SearchTerm.SaveDateSupported:
+				if ((Engine.Capabilities & ImapCapabilities.SaveDate) == 0)
+					throw new NotSupportedException ("The SAVEDATESUPPORTED search term is not supported by the IMAP server.");
+
+				builder.Append ("SAVEDATESUPPORTED");
+				break;
+			case SearchTerm.SavedBefore:
+				if ((Engine.Capabilities & ImapCapabilities.SaveDate) == 0)
+					throw new NotSupportedException ("The SAVEDBEFORE search term is not supported by the IMAP server.");
+
+				date = (DateSearchQuery) query;
+				builder.AppendFormat ("SAVEDBEFORE {0}", FormatDateTime (date.Date));
+				break;
+			case SearchTerm.SavedOn:
+				if ((Engine.Capabilities & ImapCapabilities.SaveDate) == 0)
+					throw new NotSupportedException ("The SAVEDON search term is not supported by the IMAP server.");
+
+				date = (DateSearchQuery) query;
+				builder.AppendFormat ("SAVEDON {0}", FormatDateTime (date.Date));
+				break;
+			case SearchTerm.SavedSince:
+				if ((Engine.Capabilities & ImapCapabilities.SaveDate) == 0)
+					throw new NotSupportedException ("The SAVEDSINCE search term is not supported by the IMAP server.");
+
+				date = (DateSearchQuery) query;
+				builder.AppendFormat ("SAVEDSINCE {0}", FormatDateTime (date.Date));
+				break;
 			case SearchTerm.Seen:
 				builder.Append ("SEEN");
-				break;
-			case SearchTerm.SentAfter:
-				date = (DateSearchQuery) query;
-				builder.AppendFormat ("SENTSINCE {0}", FormatDateTime (date.Date));
 				break;
 			case SearchTerm.SentBefore:
 				date = (DateSearchQuery) query;
@@ -230,82 +288,82 @@ namespace MailKit.Net.Imap
 				date = (DateSearchQuery) query;
 				builder.AppendFormat ("SENTON {0}", FormatDateTime (date.Date));
 				break;
+			case SearchTerm.SentSince:
+				date = (DateSearchQuery) query;
+				builder.AppendFormat ("SENTSINCE {0}", FormatDateTime (date.Date));
+				break;
 			case SearchTerm.SmallerThan:
 				numeric = (NumericSearchQuery) query;
-				builder.AppendFormat ("SMALLER {0}", numeric.Value);
+				builder.AppendFormat (CultureInfo.InvariantCulture, "SMALLER {0}", numeric.Value);
 				break;
 			case SearchTerm.SubjectContains:
 				text = (TextSearchQuery) query;
-				builder.Append ("SUBJECT %S");
-				args.Add (text.Text);
+				builder.Append ("SUBJECT ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			case SearchTerm.ToContains:
 				text = (TextSearchQuery) query;
-				builder.Append ("TO %S");
-				args.Add (text.Text);
+				builder.Append ("TO ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			case SearchTerm.Uid:
 				uid = (UidSearchQuery) query;
-				builder.AppendFormat ("UID {0}", ImapUtils.FormatUidSet (uid.Uids));
+				builder.AppendFormat ("UID {0}", UniqueIdSet.ToString (uid.Uids));
 				break;
 			case SearchTerm.Younger:
 				if ((Engine.Capabilities & ImapCapabilities.Within) == 0)
 					throw new NotSupportedException ("The YOUNGER search term is not supported by the IMAP server.");
 
 				numeric = (NumericSearchQuery) query;
-				builder.AppendFormat ("YOUNGER {0}", numeric.Value);
+				builder.AppendFormat (CultureInfo.InvariantCulture, "YOUNGER {0}", numeric.Value);
 				break;
 			case SearchTerm.GMailMessageId:
 				if ((Engine.Capabilities & ImapCapabilities.GMailExt1) == 0)
 					throw new NotSupportedException ("The X-GM-MSGID search term is not supported by the IMAP server.");
 
 				numeric = (NumericSearchQuery) query;
-				builder.AppendFormat ("X-GM-MSGID {0}", numeric.Value);
+				builder.AppendFormat (CultureInfo.InvariantCulture, "X-GM-MSGID {0}", numeric.Value);
 				break;
 			case SearchTerm.GMailThreadId:
 				if ((Engine.Capabilities & ImapCapabilities.GMailExt1) == 0)
 					throw new NotSupportedException ("The X-GM-THRID search term is not supported by the IMAP server.");
 
 				numeric = (NumericSearchQuery) query;
-				builder.AppendFormat ("X-GM-THRID {0}", numeric.Value);
+				builder.AppendFormat (CultureInfo.InvariantCulture, "X-GM-THRID {0}", numeric.Value);
 				break;
 			case SearchTerm.GMailLabels:
 				if ((Engine.Capabilities & ImapCapabilities.GMailExt1) == 0)
 					throw new NotSupportedException ("The X-GM-LABELS search term is not supported by the IMAP server.");
 
 				text = (TextSearchQuery) query;
-				builder.Append ("X-GM-LABELS %S");
-				args.Add (text.Text);
+				builder.Append ("X-GM-LABELS ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			case SearchTerm.GMailRaw:
 				if ((Engine.Capabilities & ImapCapabilities.GMailExt1) == 0)
 					throw new NotSupportedException ("The X-GM-RAW search term is not supported by the IMAP server.");
 
 				text = (TextSearchQuery) query;
-				builder.Append ("X-GM-RAW %S");
-				args.Add (text.Text);
+				builder.Append ("X-GM-RAW ");
+				AddTextArgument (builder, args, text.Text, ref charset);
 				break;
 			default:
 				throw new ArgumentOutOfRangeException ();
 			}
-
-			if (text != null && !IsAscii (text.Text))
-				ascii = false;
 		}
 
-		string BuildQueryExpression (SearchQuery query, List<string> args, out string charset)
+		string BuildQueryExpression (SearchQuery query, List<object> args, out string charset)
 		{
 			var builder = new StringBuilder ();
-			bool ascii = true;
 
-			BuildQuery (builder, query, args, false, ref ascii);
+			charset = null;
 
-			charset = ascii ? null : "UTF-8";
+			BuildQuery (builder, query, args, false, ref charset);
 
 			return builder.ToString ();
 		}
 
-		static string BuildSortOrder (IList<OrderBy> orderBy)
+		string BuildSortOrder (IList<OrderBy> orderBy)
 		{
 			var builder = new StringBuilder ();
 
@@ -318,11 +376,28 @@ namespace MailKit.Net.Imap
 					builder.Append ("REVERSE ");
 
 				switch (orderBy[i].Type) {
+				case OrderByType.Annotation:
+					if ((Engine.Capabilities & ImapCapabilities.Annotate) == 0)
+						throw new NotSupportedException ("The ANNOTATION search term is not supported by the IMAP server.");
+
+					var annotation = (OrderByAnnotation) orderBy[i];
+					builder.AppendFormat ("ANNOTATION {0} {1}", annotation.Entry, annotation.Attribute);
+					break;
 				case OrderByType.Arrival:     builder.Append ("ARRIVAL"); break;
 				case OrderByType.Cc:          builder.Append ("CC"); break;
 				case OrderByType.Date:        builder.Append ("DATE"); break;
-				case OrderByType.DisplayFrom: builder.Append ("DISPLAYFROM"); break;
-				case OrderByType.DisplayTo:   builder.Append ("DISPLAYTO"); break;
+				case OrderByType.DisplayFrom:
+					if ((Engine.Capabilities & ImapCapabilities.SortDisplay) == 0)
+						throw new NotSupportedException ("The IMAP server does not support the SORT=DISPLAY extension.");
+
+					builder.Append ("DISPLAYFROM");
+					break;
+				case OrderByType.DisplayTo:
+					if ((Engine.Capabilities & ImapCapabilities.SortDisplay) == 0)
+						throw new NotSupportedException ("The IMAP server does not support the SORT=DISPLAY extension.");
+
+					builder.Append ("DISPLAYTO");
+					break;
 				case OrderByType.From:        builder.Append ("FROM"); break;
 				case OrderByType.Size:        builder.Append ("SIZE"); break;
 				case OrderByType.Subject:     builder.Append ("SUBJECT"); break;
@@ -337,10 +412,9 @@ namespace MailKit.Net.Imap
 
 		static async Task SearchMatchesAsync (ImapEngine engine, ImapCommand ic, int index, bool doAsync)
 		{
-			var uids = new UniqueIdSet (SortOrder.Ascending);
 			var results = (SearchResults) ic.UserData;
+			var uids = results.UniqueIds;
 			ImapToken token;
-			ulong modseq;
 			uint uid;
 
 			do {
@@ -352,9 +426,7 @@ namespace MailKit.Net.Imap
 
 				token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
 
-				if (token.Type != ImapTokenType.Atom || !uint.TryParse ((string) token.Value, out uid) || uid == 0)
-					throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "SEARCH", token);
-
+				uid = ImapEngine.ParseNumber (token, true, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "SEARCH", token);
 				uids.Add (new UniqueId (ic.Folder.UidValidity, uid));
 			} while (true);
 
@@ -367,19 +439,15 @@ namespace MailKit.Net.Imap
 					if (token.Type == ImapTokenType.CloseParen)
 						break;
 
-					if (token.Type != ImapTokenType.Atom)
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "SEARCH", token);
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "SEARCH", token);
 
 					var atom = (string) token.Value;
 
-					switch (atom) {
+					switch (atom.ToUpperInvariant ()) {
 					case "MODSEQ":
 						token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
 
-						if (token.Type != ImapTokenType.Atom || !ulong.TryParse ((string) token.Value, out modseq)) {
-							Debug.WriteLine ("Expected 64-bit nz-number as the MODSEQ value, but got: {0}", token);
-							throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
-						}
+						results.ModSeq = ImapEngine.ParseNumber64 (token, false, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 						break;
 					}
 
@@ -394,14 +462,10 @@ namespace MailKit.Net.Imap
 		{
 			var token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
 			var results = (SearchResults) ic.UserData;
-			UniqueIdSet uids = null;
 			int parenDepth = 0;
 			//bool uid = false;
-			uint min, max;
-			ulong modseq;
 			string atom;
 			string tag;
-			int count;
 
 			if (token.Type == ImapTokenType.OpenParen) {
 				// optional search correlator
@@ -411,16 +475,14 @@ namespace MailKit.Net.Imap
 					if (token.Type == ImapTokenType.CloseParen)
 						break;
 
-					if (token.Type != ImapTokenType.Atom)
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
 
 					atom = (string) token.Value;
 
 					if (atom == "TAG") {
 						token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
 
-						if (token.Type != ImapTokenType.Atom && token.Type != ImapTokenType.QString)
-							throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+						ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapTokenType.QString, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
 
 						tag = (string) token.Value;
 
@@ -457,75 +519,65 @@ namespace MailKit.Net.Imap
 					parenDepth++;
 				}
 
-				if (token.Type != ImapTokenType.Atom)
-					throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+				ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
 
 				atom = (string) token.Value;
 
 				token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
 
-				switch (atom) {
+				switch (atom.ToUpperInvariant ()) {
 				case "RELEVANCY":
-					if (token.Type != ImapTokenType.OpenParen)
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+					ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
 
 					results.Relevancy = new List<byte> ();
 
 					do {
-						int score;
-
 						token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
 
 						if (token.Type == ImapTokenType.CloseParen)
 							break;
 
-						if (token.Type != ImapTokenType.Atom || !int.TryParse ((string) token.Value, out score) || score < 1 || score > 100)
+						var score = ImapEngine.ParseNumber (token, true, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+
+						if (score > 100)
 							throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
 
 						results.Relevancy.Add ((byte) score);
 					} while (true);
 					break;
 				case "MODSEQ":
-					if (token.Type != ImapTokenType.Atom)
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
 
-					if (!ulong.TryParse ((string) token.Value, out modseq))
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
-
-					results.ModSeq = modseq;
+					results.ModSeq = ImapEngine.ParseNumber64 (token, false, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 					break;
 				case "COUNT":
-					if (token.Type != ImapTokenType.Atom)
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
 
-					if (!int.TryParse ((string) token.Value, out count))
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					var count = ImapEngine.ParseNumber (token, false, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
-					results.Count = count;
+					results.Count = (int) count;
 					break;
 				case "MIN":
-					if (!uint.TryParse ((string) token.Value, out min) || min == 0)
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+
+					var min = ImapEngine.ParseNumber (token, true, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
 					results.Min = new UniqueId (ic.Folder.UidValidity, min);
 					break;
 				case "MAX":
-					if (token.Type != ImapTokenType.Atom)
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
 
-					if (!uint.TryParse ((string) token.Value, out max) || max == 0)
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					var max = ImapEngine.ParseNumber (token, true, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
 					results.Max = new UniqueId (ic.Folder.UidValidity, max);
 					break;
 				case "ALL":
-					if (token.Type != ImapTokenType.Atom)
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
 
-					if (!UniqueIdSet.TryParse ((string) token.Value, ic.Folder.UidValidity, out uids))
-						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					var uids = ImapEngine.ParseUidSet (token, ic.Folder.UidValidity, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
 					results.Count = uids.Count;
+					results.UniqueIds = uids;
 					break;
 				default:
 					throw ImapEngine.UnexpectedToken (ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "ESEARCH", token);
@@ -533,8 +585,6 @@ namespace MailKit.Net.Imap
 
 				token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
 			} while (true);
-
-			results.UniqueIds = uids ?? new UniqueIdSet ();
 		}
 
 		async Task<SearchResults> SearchAsync (string query, bool doAsync, CancellationToken cancellationToken)
@@ -553,8 +603,12 @@ namespace MailKit.Net.Imap
 			var ic = new ImapCommand (Engine, cancellationToken, this, command);
 			if ((Engine.Capabilities & ImapCapabilities.ESearch) != 0)
 				ic.RegisterUntaggedHandler ("ESEARCH", ESearchMatchesAsync);
+
+			// Note: always register the untagged SEARCH handler because some servers will brokenly
+			// respond with "* SEARCH ..." instead of "* ESEARCH ..." even when using the extended
+			// search syntax.
 			ic.RegisterUntaggedHandler ("SEARCH", SearchMatchesAsync);
-			ic.UserData = new SearchResults ();
+			ic.UserData = new SearchResults (UidValidity, SortOrder.Ascending);
 
 			Engine.QueueCommand (ic);
 
@@ -662,9 +716,9 @@ namespace MailKit.Net.Imap
 			return SearchAsync (query, true, cancellationToken);
 		}
 
-		async Task<IList<UniqueId>> SearchAsync (SearchQuery query, bool doAsync, CancellationToken cancellationToken)
+		async Task<IList<UniqueId>> SearchAsync (SearchQuery query, bool doAsync, bool retry, CancellationToken cancellationToken)
 		{
-			var args = new List<string> ();
+			var args = new List<object> ();
 			string charset;
 
 			if (query == null)
@@ -692,7 +746,7 @@ namespace MailKit.Net.Imap
 			// respond with "* SEARCH ..." instead of "* ESEARCH ..." even when using the extended
 			// search syntax.
 			ic.RegisterUntaggedHandler ("SEARCH", SearchMatchesAsync);
-			ic.UserData = new SearchResults ();
+			ic.UserData = new SearchResults (UidValidity, SortOrder.Ascending);
 
 			Engine.QueueCommand (ic);
 
@@ -700,8 +754,12 @@ namespace MailKit.Net.Imap
 
 			ProcessResponseCodes (ic, null);
 
-			if (ic.Response != ImapCommandResponse.Ok)
+			if (ic.Response != ImapCommandResponse.Ok) {
+				if (retry && IsBadCharset (ic, charset))
+					return await SearchAsync (query, doAsync, false, cancellationToken).ConfigureAwait (false);
+
 				throw ImapCommandException.Create ("SEARCH", ic);
+			}
 
 			return ((SearchResults) ic.UserData).UniqueIds;
 		}
@@ -748,7 +806,7 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override IList<UniqueId> Search (SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return SearchAsync (query, false, cancellationToken).GetAwaiter ().GetResult ();
+			return SearchAsync (query, false, true, cancellationToken).GetAwaiter ().GetResult ();
 		}
 
 		/// <summary>
@@ -793,12 +851,12 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override Task<IList<UniqueId>> SearchAsync (SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return SearchAsync (query, true, cancellationToken);
+			return SearchAsync (query, true, true, cancellationToken);
 		}
 
-		async Task<SearchResults> SearchAsync (SearchOptions options, SearchQuery query, bool doAsync, CancellationToken cancellationToken)
+		async Task<SearchResults> SearchAsync (SearchOptions options, SearchQuery query, bool doAsync, bool retry, CancellationToken cancellationToken)
 		{
-			var args = new List<string> ();
+			var args = new List<object> ();
 			string charset;
 
 			if (query == null)
@@ -835,7 +893,12 @@ namespace MailKit.Net.Imap
 
 			var ic = new ImapCommand (Engine, cancellationToken, this, command, args.ToArray ());
 			ic.RegisterUntaggedHandler ("ESEARCH", ESearchMatchesAsync);
-			ic.UserData = new SearchResults ();
+
+			// Note: always register the untagged SEARCH handler because some servers will brokenly
+			// respond with "* SEARCH ..." instead of "* ESEARCH ..." even when using the extended
+			// search syntax.
+			ic.RegisterUntaggedHandler ("SEARCH", SearchMatchesAsync);
+			ic.UserData = new SearchResults (UidValidity);
 
 			Engine.QueueCommand (ic);
 
@@ -843,8 +906,12 @@ namespace MailKit.Net.Imap
 
 			ProcessResponseCodes (ic, null);
 
-			if (ic.Response != ImapCommandResponse.Ok)
+			if (ic.Response != ImapCommandResponse.Ok) {
+				if (retry && IsBadCharset (ic, charset))
+					return await SearchAsync (options, query, doAsync, false, cancellationToken).ConfigureAwait (false);
+
 				throw ImapCommandException.Create ("SEARCH", ic);
+			}
 
 			return (SearchResults) ic.UserData;
 		}
@@ -894,7 +961,7 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override SearchResults Search (SearchOptions options, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return SearchAsync (options, query, false, cancellationToken).GetAwaiter ().GetResult ();
+			return SearchAsync (options, query, false, true, cancellationToken).GetAwaiter ().GetResult ();
 		}
 
 		/// <summary>
@@ -942,7 +1009,7 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override Task<SearchResults> SearchAsync (SearchOptions options, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return SearchAsync (options, query, true, cancellationToken);
+			return SearchAsync (options, query, true, true, cancellationToken);
 		}
 
 		async Task<SearchResults> SortAsync (string query, bool doAsync, CancellationToken cancellationToken)
@@ -965,7 +1032,7 @@ namespace MailKit.Net.Imap
 			if ((Engine.Capabilities & ImapCapabilities.ESort) != 0)
 				ic.RegisterUntaggedHandler ("ESEARCH", ESearchMatchesAsync);
 			ic.RegisterUntaggedHandler ("SORT", SearchMatchesAsync);
-			ic.UserData = new SearchResults ();
+			ic.UserData = new SearchResults (UidValidity);
 
 			Engine.QueueCommand (ic);
 
@@ -1079,9 +1146,9 @@ namespace MailKit.Net.Imap
 			return SortAsync (query, true, cancellationToken);
 		}
 
-		async Task<IList<UniqueId>> SortAsync (SearchQuery query, IList<OrderBy> orderBy, bool doAsync, CancellationToken cancellationToken)
+		async Task<IList<UniqueId>> SortAsync (SearchQuery query, IList<OrderBy> orderBy, bool doAsync, bool retry, CancellationToken cancellationToken)
 		{
-			var args = new List<string> ();
+			var args = new List<object> ();
 			string charset;
 
 			if (query == null)
@@ -1098,13 +1165,6 @@ namespace MailKit.Net.Imap
 			if ((Engine.Capabilities & ImapCapabilities.Sort) == 0)
 				throw new NotSupportedException ("The IMAP server does not support the SORT extension.");
 
-			if ((Engine.Capabilities & ImapCapabilities.SortDisplay) == 0) {
-				for (int i = 0; i < orderBy.Count; i++) {
-					if (orderBy [i].Type == OrderByType.DisplayFrom || orderBy [i].Type == OrderByType.DisplayTo)
-						throw new NotSupportedException ("The IMAP server does not support the SORT=DISPLAY extension.");
-				}
-			}
-
 			var optimized = query.Optimize (new ImapSearchQueryOptimizer ());
 			var expr = BuildQueryExpression (optimized, args, out charset);
 			var order = BuildSortOrder (orderBy);
@@ -1120,7 +1180,7 @@ namespace MailKit.Net.Imap
 				ic.RegisterUntaggedHandler ("ESEARCH", ESearchMatchesAsync);
 			else
 				ic.RegisterUntaggedHandler ("SORT", SearchMatchesAsync);
-			ic.UserData = new SearchResults ();
+			ic.UserData = new SearchResults (UidValidity);
 
 			Engine.QueueCommand (ic);
 
@@ -1128,8 +1188,12 @@ namespace MailKit.Net.Imap
 
 			ProcessResponseCodes (ic, null);
 
-			if (ic.Response != ImapCommandResponse.Ok)
+			if (ic.Response != ImapCommandResponse.Ok) {
+				if (retry && IsBadCharset (ic, charset))
+					return await SortAsync (query, orderBy, doAsync, false, cancellationToken).ConfigureAwait (false);
+
 				throw ImapCommandException.Create ("SORT", ic);
+			}
 
 			return ((SearchResults) ic.UserData).UniqueIds;
 		}
@@ -1184,7 +1248,7 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override IList<UniqueId> Sort (SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return SortAsync (query, orderBy, false, cancellationToken).GetAwaiter ().GetResult ();
+			return SortAsync (query, orderBy, false, true, cancellationToken).GetAwaiter ().GetResult ();
 		}
 
 		/// <summary>
@@ -1237,12 +1301,12 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override Task<IList<UniqueId>> SortAsync (SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return SortAsync (query, orderBy, true, cancellationToken);
+			return SortAsync (query, orderBy, true, true, cancellationToken);
 		}
 
-		async Task<SearchResults> SortAsync (SearchOptions options, SearchQuery query, IList<OrderBy> orderBy, bool doAsync, CancellationToken cancellationToken)
+		async Task<SearchResults> SortAsync (SearchOptions options, SearchQuery query, IList<OrderBy> orderBy, bool doAsync, bool retry, CancellationToken cancellationToken)
 		{
-			var args = new List<string> ();
+			var args = new List<object> ();
 			string charset;
 
 			if (query == null)
@@ -1258,13 +1322,6 @@ namespace MailKit.Net.Imap
 
 			if ((Engine.Capabilities & ImapCapabilities.ESort) == 0)
 				throw new NotSupportedException ("The IMAP server does not support the ESORT extension.");
-
-			if ((Engine.Capabilities & ImapCapabilities.SortDisplay) == 0) {
-				for (int i = 0; i < orderBy.Count; i++) {
-					if (orderBy[i].Type == OrderByType.DisplayFrom || orderBy[i].Type == OrderByType.DisplayTo)
-						throw new NotSupportedException ("The IMAP server does not support the SORT=DISPLAY extension.");
-				}
-			}
 
 			var optimized = query.Optimize (new ImapSearchQueryOptimizer ());
 			var expr = BuildQueryExpression (optimized, args, out charset);
@@ -1290,7 +1347,7 @@ namespace MailKit.Net.Imap
 
 			var ic = new ImapCommand (Engine, cancellationToken, this, command, args.ToArray ());
 			ic.RegisterUntaggedHandler ("ESEARCH", ESearchMatchesAsync);
-			ic.UserData = new SearchResults ();
+			ic.UserData = new SearchResults (UidValidity);
 
 			Engine.QueueCommand (ic);
 
@@ -1298,8 +1355,12 @@ namespace MailKit.Net.Imap
 
 			ProcessResponseCodes (ic, null);
 
-			if (ic.Response != ImapCommandResponse.Ok)
+			if (ic.Response != ImapCommandResponse.Ok) {
+				if (retry && IsBadCharset (ic, charset))
+					return await SortAsync (options, query, orderBy, doAsync, false, cancellationToken).ConfigureAwait (false);
+
 				throw ImapCommandException.Create ("SORT", ic);
+			}
 
 			return (SearchResults) ic.UserData;
 		}
@@ -1354,7 +1415,7 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override SearchResults Sort (SearchOptions options, SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return SortAsync (options, query, orderBy, false, cancellationToken).GetAwaiter ().GetResult ();
+			return SortAsync (options, query, orderBy, false, true, cancellationToken).GetAwaiter ().GetResult ();
 		}
 
 		/// <summary>
@@ -1407,7 +1468,7 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override Task<SearchResults> SortAsync (SearchOptions options, SearchQuery query, IList<OrderBy> orderBy, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return SortAsync (options, query, orderBy, true, cancellationToken);
+			return SortAsync (options, query, orderBy, true, true, cancellationToken);
 		}
 
 		static async Task ThreadMatchesAsync (ImapEngine engine, ImapCommand ic, int index, bool doAsync)
@@ -1415,10 +1476,10 @@ namespace MailKit.Net.Imap
 			ic.UserData = await ImapUtils.ParseThreadsAsync (engine, ic.Folder.UidValidity, doAsync, ic.CancellationToken).ConfigureAwait (false);
 		}
 
-		async Task<IList<MessageThread>> ThreadAsync (ThreadingAlgorithm algorithm, SearchQuery query, bool doAsync, CancellationToken cancellationToken)
+		async Task<IList<MessageThread>> ThreadAsync (ThreadingAlgorithm algorithm, SearchQuery query, bool doAsync, bool retry, CancellationToken cancellationToken)
 		{
 			var method = algorithm.ToString ().ToUpperInvariant ();
-			var args = new List<string> ();
+			var args = new List<object> ();
 			string charset;
 
 			if ((Engine.Capabilities & ImapCapabilities.Thread) == 0)
@@ -1447,8 +1508,12 @@ namespace MailKit.Net.Imap
 
 			ProcessResponseCodes (ic, null);
 
-			if (ic.Response != ImapCommandResponse.Ok)
+			if (ic.Response != ImapCommandResponse.Ok) {
+				if (retry && IsBadCharset (ic, charset))
+					return await ThreadAsync (algorithm, query, doAsync, false, cancellationToken).ConfigureAwait (false);
+
 				throw ImapCommandException.Create ("THREAD", ic);
+			}
 
 			var threads = (IList<MessageThread>) ic.UserData;
 
@@ -1506,7 +1571,7 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override IList<MessageThread> Thread (ThreadingAlgorithm algorithm, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return ThreadAsync (algorithm, query, false, cancellationToken).GetAwaiter ().GetResult ();
+			return ThreadAsync (algorithm, query, false, true, cancellationToken).GetAwaiter ().GetResult ();
 		}
 
 		/// <summary>
@@ -1557,15 +1622,13 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override Task<IList<MessageThread>> ThreadAsync (ThreadingAlgorithm algorithm, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return ThreadAsync (algorithm, query, true, cancellationToken);
+			return ThreadAsync (algorithm, query, true, true, cancellationToken);
 		}
 
-		async Task<IList<MessageThread>> ThreadAsync (IList<UniqueId> uids, ThreadingAlgorithm algorithm, SearchQuery query, bool doAsync, CancellationToken cancellationToken)
+		async Task<IList<MessageThread>> ThreadAsync (IList<UniqueId> uids, ThreadingAlgorithm algorithm, SearchQuery query, bool doAsync, bool retry, CancellationToken cancellationToken)
 		{
-			var method = algorithm.ToString ().ToUpperInvariant ();
-			var set = ImapUtils.FormatUidSet (uids);
-			var args = new List<string> ();
-			string charset;
+			if (uids == null)
+				throw new ArgumentNullException (nameof (uids));
 
 			if ((Engine.Capabilities & ImapCapabilities.Thread) == 0)
 				throw new NotSupportedException ("The IMAP server does not support the THREAD extension.");
@@ -1577,6 +1640,14 @@ namespace MailKit.Net.Imap
 				throw new ArgumentNullException (nameof (query));
 
 			CheckState (true, false);
+
+			if (uids.Count == 0)
+				return new MessageThread[0];
+
+			var method = algorithm.ToString ().ToUpperInvariant ();
+			var set = UniqueIdSet.ToString (uids);
+			var args = new List<object> ();
+			string charset;
 
 			var optimized = query.Optimize (new ImapSearchQueryOptimizer ());
 			var expr = BuildQueryExpression (optimized, args, out charset);
@@ -1593,8 +1664,12 @@ namespace MailKit.Net.Imap
 
 			ProcessResponseCodes (ic, null);
 
-			if (ic.Response != ImapCommandResponse.Ok)
+			if (ic.Response != ImapCommandResponse.Ok) {
+				if (retry && IsBadCharset (ic, charset))
+					return await ThreadAsync (uids, algorithm, query, doAsync, false, cancellationToken).ConfigureAwait (false);
+
 				throw ImapCommandException.Create ("THREAD", ic);
+			}
 
 			var threads = (IList<MessageThread>) ic.UserData;
 
@@ -1660,7 +1735,7 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override IList<MessageThread> Thread (IList<UniqueId> uids, ThreadingAlgorithm algorithm, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return ThreadAsync (uids, algorithm, query, false, cancellationToken).GetAwaiter ().GetResult ();
+			return ThreadAsync (uids, algorithm, query, false, true, cancellationToken).GetAwaiter ().GetResult ();
 		}
 
 		/// <summary>
@@ -1719,7 +1794,7 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		public override Task<IList<MessageThread>> ThreadAsync (IList<UniqueId> uids, ThreadingAlgorithm algorithm, SearchQuery query, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return ThreadAsync (uids, algorithm, query, true, cancellationToken);
+			return ThreadAsync (uids, algorithm, query, true, true, cancellationToken);
 		}
 	}
 }

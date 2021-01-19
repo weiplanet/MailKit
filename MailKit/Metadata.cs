@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +33,8 @@ namespace MailKit {
 	/// </remarks>
 	public class Metadata
 	{
+		internal string EncodedName;
+
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Metadata"/> class.
 		/// </summary>
@@ -40,7 +42,7 @@ namespace MailKit {
 		/// Creates a new <see cref="Metadata"/>.
 		/// </remarks>
 		/// <param name="tag">The metadata tag.</param>
-		/// <param name="value">The meatdata value.</param>
+		/// <param name="value">The metadata value.</param>
 		public Metadata (MetadataTag tag, string value)
 		{
 			Value = value;

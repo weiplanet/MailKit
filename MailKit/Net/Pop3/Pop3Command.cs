@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,11 +27,8 @@
 using System;
 using System.Text;
 using System.Threading;
+using System.Globalization;
 using System.Threading.Tasks;
-
-#if NETFX_CORE
-using Encoding = Portable.Text.Encoding;
-#endif
 
 namespace MailKit.Net.Pop3 {
 	/// <summary>
@@ -68,7 +65,7 @@ namespace MailKit.Net.Pop3 {
 
 		public Pop3Command (CancellationToken cancellationToken, Pop3CommandHandler handler, Encoding encoding, string format, params object[] args)
 		{
-			Command = string.Format (format, args);
+			Command = string.Format (CultureInfo.InvariantCulture, format, args);
 			CancellationToken = cancellationToken;
 			Encoding = encoding;
 			Handler = handler;

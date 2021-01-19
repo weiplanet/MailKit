@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -29,19 +29,9 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-
-#if NETFX_CORE
-using Windows.Networking;
-using Windows.Networking.Sockets;
-using Windows.Storage.Streams;
-using Encoding = Portable.Text.Encoding;
-#else
-using System.Net.Sockets;
-using System.Net.Security;
-using System.Security.Cryptography.X509Certificates;
-#endif
 
 using MailKit.Security;
 
@@ -401,17 +391,12 @@ namespace MailKit.Net.Imap
 			return ConnectAsync (host, port, options, true, cancellationToken);
 		}
 
-#if !NETFX_CORE
 		/// <summary>
 		/// Asynchronously establish a connection to the specified IMAP or IMAP/S server using the provided socket.
 		/// </summary>
 		/// <remarks>
 		/// <para>Establishes a connection to the specified IMAP or IMAP/S server using
 		/// the provided socket.</para>
-		/// <para>If the <paramref name="port"/> has a value of <c>0</c>, then the
-		/// <paramref name="options"/> parameter is used to determine the default port to
-		/// connect to. The default port used with <see cref="SecureSocketOptions.SslOnConnect"/>
-		/// is <c>993</c>. All other values will use a default port of <c>143</c>.</para>
 		/// <para>If the <paramref name="options"/> has a value of
 		/// <see cref="SecureSocketOptions.Auto"/>, then the <paramref name="port"/> is used
 		/// to determine the default security options. If the <paramref name="port"/> has a value
@@ -421,6 +406,10 @@ namespace MailKit.Net.Imap
 		/// <para>Once a connection is established, properties such as
 		/// <see cref="AuthenticationMechanisms"/> and <see cref="Capabilities"/> will be
 		/// populated.</para>
+		/// <note type="info">With the exception of using the <paramref name="port"/> to determine the
+		/// default <see cref="SecureSocketOptions"/> to use when the <paramref name="options"/> value
+		/// is <see cref="SecureSocketOptions.Auto"/>, the <paramref name="host"/> and
+		/// <paramref name="port"/> parameters are only used for logging purposes.</note>
 		/// </remarks>
 		/// <returns>An asynchronous task context.</returns>
 		/// <param name="socket">The socket to use for the connection.</param>
@@ -467,11 +456,78 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		public Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			return ConnectAsync (socket, host, port, options, true, cancellationToken);
 		}
-#endif
+
+		/// <summary>
+		/// Asynchronously establish a connection to the specified IMAP or IMAP/S server using the provided stream.
+		/// </summary>
+		/// <remarks>
+		/// <para>Establishes a connection to the specified IMAP or IMAP/S server using
+		/// the provided stream.</para>
+		/// <para>If the <paramref name="options"/> has a value of
+		/// <see cref="SecureSocketOptions.Auto"/>, then the <paramref name="port"/> is used
+		/// to determine the default security options. If the <paramref name="port"/> has a value
+		/// of <c>993</c>, then the default options used will be
+		/// <see cref="SecureSocketOptions.SslOnConnect"/>. All other values will use
+		/// <see cref="SecureSocketOptions.StartTlsWhenAvailable"/>.</para>
+		/// <para>Once a connection is established, properties such as
+		/// <see cref="AuthenticationMechanisms"/> and <see cref="Capabilities"/> will be
+		/// populated.</para>
+		/// <note type="info">With the exception of using the <paramref name="port"/> to determine the
+		/// default <see cref="SecureSocketOptions"/> to use when the <paramref name="options"/> value
+		/// is <see cref="SecureSocketOptions.Auto"/>, the <paramref name="host"/> and
+		/// <paramref name="port"/> parameters are only used for logging purposes.</note>
+		/// </remarks>
+		/// <returns>An asynchronous task context.</returns>
+		/// <param name="stream">The stream to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// The <paramref name="host"/> is a zero-length string.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="ImapClient"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.NotSupportedException">
+		/// <paramref name="options"/> was set to
+		/// <see cref="MailKit.Security.SecureSocketOptions.StartTls"/>
+		/// and the IMAP server does not support the STARTTLS extension.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="SslHandshakeException">
+		/// An error occurred during the SSL/TLS negotiations.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// An IMAP command failed.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// An IMAP protocol error occurred.
+		/// </exception>
+		public override Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		{
+			return ConnectAsync (stream, host, port, options, true, cancellationToken);
+		}
 
 		/// <summary>
 		/// Asynchronously disconnect the service.
@@ -600,6 +656,99 @@ namespace MailKit.Net.Imap
 		}
 
 		/// <summary>
+		/// Asynchronously request the specified notification events from the IMAP server.
+		/// </summary>
+		/// <remarks>
+		/// <para>The <a href="https://tools.ietf.org/html/rfc5465">NOTIFY</a> command is used to expand
+		/// which notifications the client wishes to be notified about, including status notifications
+		/// about folders other than the currently selected folder. It can also be used to automatically
+		/// FETCH information about new messages that have arrived in the currently selected folder.</para>
+		/// <para>This, combined with <see cref="IdleAsync(CancellationToken, CancellationToken)"/>,
+		/// can be used to get instant notifications for changes to any of the specified folders.</para>
+		/// </remarks>
+		/// <returns>An asynchronous task context.</returns>
+		/// <param name="status"><c>true</c> if the server should immediately notify the client of the
+		/// selected folder's status; otherwise, <c>false</c>.</param>
+		/// <param name="eventGroups">The specific event groups that the client would like to receive notifications for.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="eventGroups"/> is <c>null</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="eventGroups"/> is empty.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// One or more <see cref="ImapEventGroup"/> is invalid.
+		/// </exception>
+		/// <exception cref="System.NotSupportedException">
+		/// The IMAP server does not support the NOTIFY extension.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied to the NOTIFY command with a NO or BAD response.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server responded with an unexpected token.
+		/// </exception>
+		public Task NotifyAsync (bool status, IList<ImapEventGroup> eventGroups, CancellationToken cancellationToken = default (CancellationToken))
+		{
+			return NotifyAsync (status, eventGroups, true, cancellationToken);
+		}
+
+		/// <summary>
+		/// Asynchronously disable any previously requested notification events from the IMAP server.
+		/// </summary>
+		/// <remarks>
+		/// Disables any notification events requested in a prior call to 
+		/// <see cref="NotifyAsync(bool, IList{ImapEventGroup}, CancellationToken)"/>.
+		/// request.
+		/// </remarks>
+		/// <returns>An asynchronous task context.</returns>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="System.NotSupportedException">
+		/// The IMAP server does not support the NOTIFY extension.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied to the NOTIFY command with a NO or BAD response.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server responded with an unexpected token.
+		/// </exception>
+		public Task DisableNotifyAsync (CancellationToken cancellationToken = default (CancellationToken))
+		{
+			return DisableNotifyAsync (true, cancellationToken);
+		}
+
+		/// <summary>
 		/// Asynchronously get all of the folders within the specified namespace.
 		/// </summary>
 		/// <remarks>
@@ -673,7 +822,7 @@ namespace MailKit.Net.Imap
 		/// An I/O error occurred.
 		/// </exception>
 		/// <exception cref="ImapCommandException">
-		/// The server replied to the IDLE command with a NO or BAD response.
+		/// The server replied to the LIST command with a NO or BAD response.
 		/// </exception>
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
@@ -709,7 +858,7 @@ namespace MailKit.Net.Imap
 		/// The <see cref="ImapClient"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
-		/// The IMAP server does not support the METADATA extension.
+		/// The IMAP server does not support the METADATA or METADATA-SERVER extension.
 		/// </exception>
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.
@@ -753,7 +902,7 @@ namespace MailKit.Net.Imap
 		/// The <see cref="ImapClient"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
-		/// The IMAP server does not support the METADATA extension.
+		/// The IMAP server does not support the METADATA or METADATA-SERVER extension.
 		/// </exception>
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.
@@ -794,7 +943,7 @@ namespace MailKit.Net.Imap
 		/// The <see cref="ImapClient"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
-		/// The IMAP server does not support the METADATA extension.
+		/// The IMAP server does not support the METADATA or METADATA-SERVER extension.
 		/// </exception>
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.

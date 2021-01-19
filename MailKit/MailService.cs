@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,20 +25,19 @@
 //
 
 using System;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
+using System.Net.Sockets;
+using System.Net.Security;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-
-#if !NETFX_CORE
-using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using SslProtocols = System.Security.Authentication.SslProtocols;
-#else
-using Encoding = Portable.Text.Encoding;
-#endif
 
+using MailKit.Net;
+using MailKit.Net.Proxy;
 using MailKit.Security;
 
 namespace MailKit {
@@ -50,10 +49,10 @@ namespace MailKit {
 	/// </remarks>
 	public abstract class MailService : IMailService
 	{
-#if NET_4_5 || __MOBILE__ || NETSTANDARD
-		const SslProtocols DefaultSslProtocols = SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12;
-#elif !NETFX_CORE
-		const SslProtocols DefaultSslProtocols = SslProtocols.Tls;
+#if NET48
+		const SslProtocols DefaultSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13;
+#else
+		const SslProtocols DefaultSslProtocols = SslProtocols.Tls12 | (SslProtocols) 12288;
 #endif
 
 		/// <summary>
@@ -71,10 +70,8 @@ namespace MailKit {
 			if (protocolLogger == null)
 				throw new ArgumentNullException (nameof (protocolLogger));
 
-#if !NETFX_CORE
 			SslProtocols = DefaultSslProtocols;
 			CheckCertificateRevocation = true;
-#endif
 			ProtocolLogger = protocolLogger;
 		}
 
@@ -86,9 +83,6 @@ namespace MailKit {
 		/// </remarks>
 		protected MailService () : this (new NullProtocolLogger ())
 		{
-#if !NETFX_CORE
-            CheckCertificateRevocation = true;
-#endif
 		}
 
 		/// <summary>
@@ -137,16 +131,18 @@ namespace MailKit {
 			get; private set;
 		}
 
-#if !NETFX_CORE
 		/// <summary>
-		/// Gets or sets the SSL/TLS protocols that the client is allowed to use.
+		/// Gets or sets the SSL and TLS protocol versions that the client is allowed to use.
 		/// </summary>
 		/// <remarks>
-		/// <para>Gets or sets the SSL/TLS protocols that the client is allowed to use.</para>
+		/// <para>Gets or sets the SSL and TLS protocol versions that the client is allowed to use.</para>
+		/// <para>By default, MailKit initializes this value to support only TLS v1.2 and greater and
+		/// does not support TLS v1.1, TLS v1.0 or any version of SSL due to those protocols being
+		/// susceptible to security vulnerabilities such as POODLE.</para>
 		/// <para>This property should be set before calling any of the
 		/// <a href="Overload_MailKit_MailService_Connect.htm">Connect</a> methods.</para>
 		/// </remarks>
-		/// <value>The ssl protocols.</value>
+		/// <value>The SSL and TLS protocol versions that are supported.</value>
 		public SslProtocols SslProtocols {
 			get; set;
 		}
@@ -169,9 +165,18 @@ namespace MailKit {
 		/// Get or set whether connecting via SSL/TLS should check certificate revocation.
 		/// </summary>
 		/// <remarks>
-		/// Gets or sets whether connecting via SSL/TLS should check certificate revocation.
+		/// <para>Gets or sets whether connecting via SSL/TLS should check certificate revocation.</para>
+		/// <para>Normally, the value of this property should be set to <c>true</c> (the default) for security
+		/// reasons, but there are times when it may be necessary to set it to <c>false</c>.</para>
+		/// <para>For example, most Certificate Authorities are probably pretty good at keeping their CRL and/or
+		/// OCSP servers up 24/7, but occasionally they do go down or are otherwise unreachable due to other
+		/// network problems between the client and the Certificate Authority. When this happens, it becomes
+		/// impossible to check the revocation status of one or more of the certificates in the chain
+		/// resulting in an <see cref="SslHandshakeException"/> being thrown in the
+		/// <a href="Overload_MailKit_MailService_Connect.htm">Connect</a> method. If this becomes a problem,
+		/// it may become desirable to set <see cref="CheckCertificateRevocation"/> to <c>false</c>.</para>
 		/// </remarks>
-		/// <value><c>true</c> certificate revocation should be checked; otherwise, <c>false</c>.</value>
+		/// <value><c>true</c> if certificate revocation should be checked; otherwise, <c>false</c>.</value>
 		public bool CheckCertificateRevocation {
 			get; set;
 		}
@@ -185,7 +190,7 @@ namespace MailKit {
 		/// <a href="Overload_MailKit_MailService_Connect.htm">Connect</a> methods.</para>
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\InvalidSslCertificate.cs" region="Simple"/>
+		/// <code language="c#" source="Examples\SslCertificateValidation.cs"/>
 		/// </example>
 		/// <value>The server certificate validation callback function.</value>
 		public RemoteCertificateValidationCallback ServerCertificateValidationCallback {
@@ -202,7 +207,18 @@ namespace MailKit {
 		public IPEndPoint LocalEndPoint {
 			get; set;
 		}
-#endif
+
+		/// <summary>
+		/// Get or set the proxy client to use when connecting to a remote host.
+		/// </summary>
+		/// <remarks>
+		/// Gets or sets the proxy client to use when connecting to a remote host via any of the
+		/// <a href="Overload_MailKit_MailService_Connect.htm">Connect</a> methods.
+		/// </remarks>
+		/// <value>The proxy client.</value>
+		public IProxyClient ProxyClient {
+			get; set;
+		}
 
 		/// <summary>
 		/// Gets the authentication mechanisms supported by the mail server.
@@ -271,55 +287,115 @@ namespace MailKit {
 			get; set;
 		}
 
-#if !NETFX_CORE
+		const string AppleCertificateIssuer = "C=US, S=California, O=Apple Inc., CN=Apple Public Server RSA CA 12 - G1";
+		const string GMailCertificateIssuer = "CN=GTS CA 1O1, O=Google Trust Services, C=US";
+		const string OutlookCertificateIssuer = "CN=GlobalSign Organization Validation CA - SHA256 - G3, O=GlobalSign nv-sa, C=BE";
+		const string YahooCertificateIssuer = "CN=DigiCert SHA2 High Assurance Server CA, OU=www.digicert.com, O=DigiCert Inc, C=US";
+		const string GmxDotComCertificateIssuer = "CN=GeoTrust RSA CA 2018, OU=www.digicert.com, O=DigiCert Inc, C=US";
+		const string GmxDotNetCertificateIssuer = "CN=TeleSec ServerPass Extended Validation Class 3 CA, STREET=Untere Industriestr. 20, L=Netphen, PostalCode=57250, S=Nordrhein Westfalen, OU=T-Systems Trust Center, O=T-Systems International GmbH, C=DE";
+
+		// Note: This method auto-generated by https://gist.github.com/jstedfast/7cd36a51cee740ed84b18435106eaea5
+		static bool IsKnownMailServerCertificate (X509Certificate2 certificate)
+		{
+			var cn = certificate.GetNameInfo (X509NameType.SimpleName, false);
+			var fingerprint = certificate.Thumbprint;
+			var serial = certificate.SerialNumber;
+			var issuer = certificate.Issuer;
+
+			switch (cn) {
+			case "imap.gmail.com":
+				return issuer == GMailCertificateIssuer && serial == "00BABE95B167C9ECAF08000000006065B6" && fingerprint == "E79A011EF55EEC72D2B7E391D193761372796836"; // Expires 1/12/2021 1:07:03 PM
+			case "pop.gmail.com":
+				return issuer == GMailCertificateIssuer && serial == "144A7EDBEFED8ECF080000000061D6E0" && fingerprint == "86E6FC842D45A4B100AAE56B08306FA530A2D370"; // Expires 1/20/2021 11:22:15 AM
+			case "smtp.gmail.com":
+				return issuer == GMailCertificateIssuer && serial == "00A0D37DC18C84E8B602000000007FD4D7" && fingerprint == "DF20F56F063AB38093091B2873D046E66EDFD2D2"; // Expires 1/20/2021 11:22:20 AM
+			case "outlook.com":
+				return issuer == OutlookCertificateIssuer && serial == "6DEA0BE1972760A159B18560" && fingerprint == "81ECA745808B790D002AFB6C48B55F25A1119ADB"; // Expires 8/14/2022 7:18:49 PM
+			case "imap.mail.me.com":
+				return issuer == AppleCertificateIssuer && serial == "7693E9D2C3B5564F4F9A487D15A54116" && fingerprint == "FACBDEB692021F6404BE8B88A563767B282F98EE"; // Expires 10/3/2021 5:51:43 PM
+			case "smtp.mail.me.com":
+				return issuer == AppleCertificateIssuer && serial == "0A3048DECAB5CAA796E163E011CAE82E" && fingerprint == "B14CE4D4FF15FBC3C16C4848F1C632552184BD79"; // Expires 10/3/2021 6:12:03 PM
+			case "*.imap.mail.yahoo.com":
+				return issuer == YahooCertificateIssuer && serial == "0B591CC4A1E674384332A0FFCCF86845" && fingerprint == "577AC048211627BCDA8AF9DA39DE6DCB05F8DA28"; // Expires 12/27/2020 7:00:00 AM
+			case "legacy.pop.mail.yahoo.com":
+				return issuer == YahooCertificateIssuer && serial == "058035C3D2AC58483DD14D3E2F9145B8" && fingerprint == "167AF555D510FACCA7B0B48EE0D10C360B512960"; // Expires 3/3/2021 7:00:00 AM
+			case "smtp.mail.yahoo.com":
+				return issuer == YahooCertificateIssuer && serial == "0C0D2A80B36896D8680FF2AC6AB6F92E" && fingerprint == "9EF297FF5370FDE75927EC5253EE0283668E317A"; // Expires 1/26/2021 7:00:00 AM
+			case "mout.gmx.com":
+				return issuer == GmxDotComCertificateIssuer && serial == "06206F2270494CD7AD11F2B17E286C2C" && fingerprint == "A7D3BCC363B307EC3BDE21269A2F05117D6614A8"; // Expires 7/12/2022 8:00:00 AM
+			case "mail.gmx.com":
+				return issuer == GmxDotComCertificateIssuer && serial == "0719A4D33A18B550133DDA3253AF6C96" && fingerprint == "948B0C3FA22BC12C91EEE5B1631A6C41B4A01B9C"; // Expires 7/12/2022 8:00:00 AM
+			case "mail.gmx.net":
+				return issuer == GmxDotNetCertificateIssuer && serial == "218296213149726650EB233346353EEA" && fingerprint == "67DED57393303E005937D5EDECB6A29C136024CA"; // Expires 5/13/2021 7:59:59 PM
+			default:
+				return false;
+			}
+		}
+
+		static bool IsUntrustedRoot (X509Chain chain)
+		{
+			foreach (var status in chain.ChainStatus) {
+				if (status.Status == X509ChainStatusFlags.NoError || status.Status == X509ChainStatusFlags.UntrustedRoot)
+					continue;
+
+				return false;
+			}
+
+			return true;
+		}
+
+		internal SslCertificateValidationInfo SslCertificateValidationInfo;
+
 		/// <summary>
 		/// The default server certificate validation callback used when connecting via SSL or TLS.
 		/// </summary>
 		/// <remarks>
-		/// <para>The default server certificate validation callback considers self-signed certificates to be
-		/// valid so long as the only error in the certificate chain is an untrusted root.</para>
-		/// <note type="security">It should be noted that self-signed certificates may be an indication of
-		/// a man-in-the-middle (MITM) attack and so it is recommended that the client implement a custom
-		/// server certificate validation callback that presents the certificate to the user in some way,
-		/// allowing the user to confirm or deny its validity.</note>
+		/// <para>The default server certificate validation callback recognizes and accepts the certificates
+		/// for a list of commonly used mail servers such as gmail.com, outlook.com, mail.me.com, yahoo.com,
+		/// and gmx.net.</para>
 		/// </remarks>
 		/// <returns><c>true</c> if the certificate is deemed valid; otherwise, <c>false</c>.</returns>
 		/// <param name="sender">The object that is connecting via SSL or TLS.</param>
 		/// <param name="certificate">The server's SSL certificate.</param>
 		/// <param name="chain">The server's SSL certificate chain.</param>
 		/// <param name="sslPolicyErrors">The SSL policy errors.</param>
-		public static bool DefaultServerCertificateValidationCallback (object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+		protected bool DefaultServerCertificateValidationCallback (object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
 		{
+			const SslPolicyErrors mask = SslPolicyErrors.RemoteCertificateNotAvailable | SslPolicyErrors.RemoteCertificateNameMismatch;
+
+			SslCertificateValidationInfo = null;
+
 			if (sslPolicyErrors == SslPolicyErrors.None)
 				return true;
 
-			// if there are errors in the certificate chain, look at each error to determine the cause
-			if ((sslPolicyErrors & SslPolicyErrors.RemoteCertificateChainErrors) != 0) {
-				if (chain != null && chain.ChainStatus != null) {
-					foreach (var status in chain.ChainStatus) {
-						if ((certificate.Subject == certificate.Issuer) && (status.Status == X509ChainStatusFlags.UntrustedRoot)) {
-							// treat self-signed certificates with an untrusted root as valid since they are so
-							// common among mail server installations
-							continue;
-						}
+			if ((sslPolicyErrors & mask) == 0) {
+				// At this point, all that is left is SslPolicyErrors.RemoteCertificateChainErrors
 
-						if (status.Status != X509ChainStatusFlags.NoError) {
-							// if there are any other errors in the certificate chain, the certificate is invalid,
-							// so return false
-							return false;
-						}
-					}
+				// If the problem is an untrusted root, then compare the certificate to a list of known mail server certificates.
+				if (IsUntrustedRoot (chain) && certificate is X509Certificate2 certificate2) {
+					if (IsKnownMailServerCertificate (certificate2))
+						return true;
 				}
-
-				// Note: If we get this far, then the only errors in the certificate chain are untrusted root errors for
-				// self-signed certificates. Since self-signed certificates are so common for mail server installations,
-				// treat the certificate as valid.
-				return true;
 			}
+
+			SslCertificateValidationInfo = new SslCertificateValidationInfo (sender, certificate, chain, sslPolicyErrors);
 
 			return false;
 		}
-#endif
+
+		internal async Task<Socket> ConnectSocket (string host, int port, bool doAsync, CancellationToken cancellationToken)
+		{
+			if (ProxyClient != null) {
+				ProxyClient.LocalEndPoint = LocalEndPoint;
+
+				if (doAsync)
+					return await ProxyClient.ConnectAsync (host, port, Timeout, cancellationToken).ConfigureAwait (false);
+
+				return ProxyClient.Connect (host, port, Timeout, cancellationToken);
+			}
+
+			return await SocketUtils.ConnectAsync (host, port, LocalEndPoint, Timeout, doAsync, cancellationToken).ConfigureAwait (false);
+		}
 
 		/// <summary>
 		/// Establish a connection to the specified mail server.
@@ -403,22 +479,192 @@ namespace MailKit {
 		/// </exception>
 		public abstract Task ConnectAsync (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
 
-		SecureSocketOptions GetSecureSocketOptions (Uri uri)
+		/// <summary>
+		/// Establish a connection to the specified mail server using the provided socket.
+		/// </summary>
+		/// <remarks>
+		/// <para>Establish a connection to the specified mail server using the provided socket.</para>
+		/// <para>If a successful connection is made, the <see cref="AuthenticationMechanisms"/>
+		/// property will be populated.</para>
+		/// </remarks>
+		/// <param name="socket">The socket to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="socket"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <para><paramref name="socket"/> is not connected.</para>
+		/// <para>-or-</para>
+		/// <para>The <paramref name="host"/> is a zero-length string.</para>
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="IMailService"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="CommandException">
+		/// The command was rejected by the mail server.
+		/// </exception>
+		/// <exception cref="ProtocolException">
+		/// The server responded with an unexpected token.
+		/// </exception>
+		public abstract void Connect (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+
+		/// <summary>
+		/// Asynchronously establish a connection to the specified mail server using the provided socket.
+		/// </summary>
+		/// <remarks>
+		/// <para>Asynchronously establishes a connection to the specified mail server using the provided socket.</para>
+		/// <para>If a successful connection is made, the <see cref="AuthenticationMechanisms"/>
+		/// property will be populated.</para>
+		/// </remarks>
+		/// <returns>An asynchronous task context.</returns>
+		/// <param name="socket">The socket to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="socket"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <para><paramref name="socket"/> is not connected.</para>
+		/// <para>-or-</para>
+		/// <para>The <paramref name="host"/> is a zero-length string.</para>
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="IMailService"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="CommandException">
+		/// The command was rejected by the mail server.
+		/// </exception>
+		/// <exception cref="ProtocolException">
+		/// The server responded with an unexpected token.
+		/// </exception>
+		public abstract Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+
+		/// <summary>
+		/// Establish a connection to the specified mail server using the provided stream.
+		/// </summary>
+		/// <remarks>
+		/// <para>Establish a connection to the specified mail server using the provided stream.</para>
+		/// <para>If a successful connection is made, the <see cref="AuthenticationMechanisms"/>
+		/// property will be populated.</para>
+		/// </remarks>
+		/// <param name="stream">The stream to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// The <paramref name="host"/> is a zero-length string.
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="IMailService"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="CommandException">
+		/// The command was rejected by the mail server.
+		/// </exception>
+		/// <exception cref="ProtocolException">
+		/// The server responded with an unexpected token.
+		/// </exception>
+		public abstract void Connect (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+
+		/// <summary>
+		/// Asynchronously establish a connection to the specified mail server using the provided stream.
+		/// </summary>
+		/// <remarks>
+		/// <para>Asynchronously establishes a connection to the specified mail server using the provided stream.</para>
+		/// <para>If a successful connection is made, the <see cref="AuthenticationMechanisms"/>
+		/// property will be populated.</para>
+		/// </remarks>
+		/// <returns>An asynchronous task context.</returns>
+		/// <param name="stream">The stream to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// The <paramref name="host"/> is a zero-length string.
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="IMailService"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="CommandException">
+		/// The command was rejected by the mail server.
+		/// </exception>
+		/// <exception cref="ProtocolException">
+		/// The server responded with an unexpected token.
+		/// </exception>
+		public abstract Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+
+		internal SecureSocketOptions GetSecureSocketOptions (Uri uri)
 		{
-			var protocol = uri.Scheme.ToLowerInvariant ();
 			var query = uri.ParsedQuery ();
+			var protocol = uri.Scheme;
 			string value;
 
 			// Note: early versions of MailKit used "pop3" and "pop3s"
-			if (protocol == "pop3s")
+			if (protocol.Equals ("pop3s", StringComparison.OrdinalIgnoreCase))
 				protocol = "pops";
-			else if (protocol == "pop3")
+			else if (protocol.Equals ("pop3", StringComparison.OrdinalIgnoreCase))
 				protocol = "pop";
 
-			if (protocol == Protocol + "s")
+			if (protocol.Equals (Protocol + "s", StringComparison.OrdinalIgnoreCase))
 				return SecureSocketOptions.SslOnConnect;
 
-			if (protocol != Protocol)
+			if (!protocol.Equals (Protocol, StringComparison.OrdinalIgnoreCase))
 				throw new ArgumentException ("Unknown URI scheme.", nameof (uri));
 
 			if (query.TryGetValue ("starttls", out value)) {
@@ -1016,15 +1262,7 @@ namespace MailKit {
 		/// </exception>
 		public void Authenticate (string userName, string password, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			if (userName == null)
-				throw new ArgumentNullException (nameof (userName));
-
-			if (password == null)
-				throw new ArgumentNullException (nameof (password));
-
-			var credentials = new NetworkCredential (userName, password);
-
-			Authenticate (Encoding.UTF8, credentials, cancellationToken);
+			Authenticate (Encoding.UTF8, userName, password, cancellationToken);
 		}
 
 		/// <summary>
@@ -1074,15 +1312,7 @@ namespace MailKit {
 		/// </exception>
 		public Task AuthenticateAsync (string userName, string password, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			if (userName == null)
-				throw new ArgumentNullException (nameof (userName));
-
-			if (password == null)
-				throw new ArgumentNullException (nameof (password));
-
-			var credentials = new NetworkCredential (userName, password);
-
-			return AuthenticateAsync (Encoding.UTF8, credentials, cancellationToken);
+			return AuthenticateAsync (Encoding.UTF8, userName, password, cancellationToken);
 		}
 
 		/// <summary>
@@ -1256,7 +1486,7 @@ namespace MailKit {
 		/// The <see cref="Connected"/> event is raised when the client
 		/// successfully connects to the mail server.
 		/// </remarks>
-		public event EventHandler<EventArgs> Connected;
+		public event EventHandler<ConnectedEventArgs> Connected;
 
 		/// <summary>
 		/// Raise the connected event.
@@ -1264,12 +1494,15 @@ namespace MailKit {
 		/// <remarks>
 		/// Raises the connected event.
 		/// </remarks>
-		protected virtual void OnConnected ()
+		/// <param name="host">The name of the host that the client connected to.</param>
+		/// <param name="port">The port that the client connected to on the remote host.</param>
+		/// <param name="options">The SSL/TLS options that were used when connecting.</param>
+		protected virtual void OnConnected (string host, int port, SecureSocketOptions options)
 		{
 			var handler = Connected;
 
 			if (handler != null)
-				handler (this, EventArgs.Empty);
+				handler (this, new ConnectedEventArgs (host, port, options));
 		}
 
 		/// <summary>
@@ -1279,7 +1512,7 @@ namespace MailKit {
 		/// The <see cref="Disconnected"/> event is raised whenever the client
 		/// gets disconnected.
 		/// </remarks>
-		public event EventHandler<EventArgs> Disconnected;
+		public event EventHandler<DisconnectedEventArgs> Disconnected;
 
 		/// <summary>
 		/// Raise the disconnected event.
@@ -1287,12 +1520,16 @@ namespace MailKit {
 		/// <remarks>
 		/// Raises the disconnected event.
 		/// </remarks>
-		protected virtual void OnDisconnected ()
+		/// <param name="host">The name of the host that the client was connected to.</param>
+		/// <param name="port">The port that the client was connected to on the remote host.</param>
+		/// <param name="options">The SSL/TLS options that were used by the client.</param>
+		/// <param name="requested"><c>true</c> if the disconnect was explicitly requested; otherwise, <c>false</c>.</param>
+		protected virtual void OnDisconnected (string host, int port, SecureSocketOptions options, bool requested)
 		{
 			var handler = Disconnected;
 
 			if (handler != null)
-				handler (this, EventArgs.Empty);
+				handler (this, new DisconnectedEventArgs (host, port, options, requested));
 		}
 
 		/// <summary>

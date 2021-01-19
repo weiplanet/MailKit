@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -171,19 +171,36 @@ namespace UnitTests.Net.Smtp {
 			sent.Write (buffer, offset, count);
 
 			if (sent.Length >= commands[index].Command.Length) {
-				var command = Encoding.UTF8.GetString (sent.GetBuffer (), 0, (int) sent.Length);
-
 				if (state == SmtpReplayState.WaitForCommand) {
+					var command = Encoding.UTF8.GetString (sent.GetBuffer (), 0, (int) sent.Length);
+
+					if (command.StartsWith ("MAIL FROM:", StringComparison.Ordinal)) {
+						var startIndex = command.IndexOf (" SIZE=", StringComparison.Ordinal);
+
+						if (index != -1) {
+							int endIndex = startIndex + " SIZE=".Length;
+
+							while (command[endIndex] != ' ' && command[endIndex] != '\r')
+								endIndex++;
+
+							command = command.Remove (startIndex, endIndex - startIndex);
+						}
+					}
+
 					Assert.AreEqual (commands[index].Command, command, "Commands did not match.");
 
 					stream = GetResourceStream (commands[index].Resource);
 					state = SmtpReplayState.SendResponse;
-				} else if (command == "\r\n.\r\n") {
-					stream = GetResourceStream (commands[index].Resource);
-					state = SmtpReplayState.SendResponse;
-				}
+					sent.SetLength (0);
+				} else if (sent.Length > 5) {
+					var command = Encoding.ASCII.GetString (sent.GetBuffer (), (int) sent.Length - 5, 5);
 
-				sent.SetLength (0);
+					if (command == "\r\n.\r\n") {
+						stream = GetResourceStream (commands[index].Resource);
+						state = SmtpReplayState.SendResponse;
+						sent.SetLength (0);
+					}
+				}
 			}
 		}
 

@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,16 +27,12 @@
 using System;
 using System.Net;
 using System.Text;
+using System.Globalization;
 using System.Collections.Generic;
+using System.Security.Cryptography;
 
-#if NETFX_CORE
-using Encoding = Portable.Text.Encoding;
+#if NETSTANDARD1_3 || NETSTANDARD1_6
 using MD5 = MimeKit.Cryptography.MD5;
-#elif NETSTANDARD
-using System.Security.Cryptography;
-using MD5 = MimeKit.Cryptography.MD5;
-#else
-using System.Security.Cryptography;
 #endif
 
 namespace MailKit.Security {
@@ -50,6 +46,8 @@ namespace MailKit.Security {
 	/// </remarks>
 	public class SaslMechanismDigestMd5 : SaslMechanism
 	{
+		static readonly Encoding Latin1;
+
 		enum LoginState {
 			Auth,
 			Final
@@ -57,27 +55,17 @@ namespace MailKit.Security {
 
 		DigestChallenge challenge;
 		DigestResponse response;
+		internal string cnonce;
+		Encoding encoding;
 		LoginState state;
-		string cnonce;
 
-		/// <summary>
-		/// Initializes a new instance of the <see cref="MailKit.Security.SaslMechanismDigestMd5"/> class.
-		/// </summary>
-		/// <remarks>
-		/// Creates a new DIGEST-MD5 SASL context.
-		/// </remarks>
-		/// <param name="uri">The URI of the service.</param>
-		/// <param name="credentials">The user's credentials.</param>
-		/// <param name="entropy">Random characters to act as the cnonce token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uri"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/> is <c>null</c>.</para>
-		/// </exception>
-		internal SaslMechanismDigestMd5 (Uri uri, NetworkCredential credentials, string entropy) : base (credentials)
+		static SaslMechanismDigestMd5 ()
 		{
-			cnonce = entropy;
-			Uri = uri;
+			try {
+				Latin1 = Encoding.GetEncoding (28591);
+			} catch (NotSupportedException) {
+				Latin1 = Encoding.GetEncoding (1252);
+			}
 		}
 
 		/// <summary>
@@ -194,11 +182,11 @@ namespace MailKit.Security {
 		/// </exception>
 		protected override byte[] Challenge (byte[] token, int startIndex, int length)
 		{
-			if (IsAuthenticated)
-				throw new InvalidOperationException ();
-
 			if (token == null)
 				throw new NotSupportedException ("DIGEST-MD5 does not support SASL-IR.");
+
+			if (IsAuthenticated)
+				return null;
 
 			switch (state) {
 			case LoginState.Auth:
@@ -206,39 +194,35 @@ namespace MailKit.Security {
 					throw new SaslException (MechanismName, SaslErrorCode.ChallengeTooLong, "Server challenge too long.");
 
 				challenge = DigestChallenge.Parse (Encoding.UTF8.GetString (token, startIndex, length));
+				encoding = challenge.Charset != null ? Encoding.UTF8 : Latin1;
+				cnonce = cnonce ?? GenerateEntropy (15);
 
-				if (string.IsNullOrEmpty (cnonce)) {
-					var entropy = new byte[15];
-
-					using (var rng = RandomNumberGenerator.Create ())
-						rng.GetBytes (entropy);
-
-					cnonce = Convert.ToBase64String (entropy);
-				}
-
-				response = new DigestResponse (challenge, Uri.Scheme, Uri.DnsSafeHost, AuthorizationId, Credentials.UserName, Credentials.Password, cnonce);
+				response = new DigestResponse (challenge, encoding, Uri.Scheme, Uri.DnsSafeHost, AuthorizationId, Credentials.UserName, Credentials.Password, cnonce);
 				state = LoginState.Final;
-				return response.Encode ();
+
+				return response.Encode (encoding);
 			case LoginState.Final:
 				if (token.Length == 0)
 					throw new SaslException (MechanismName, SaslErrorCode.MissingChallenge, "Server response did not contain any authentication data.");
 
-				var text = Encoding.UTF8.GetString (token, startIndex, length);
+				var text = encoding.GetString (token, startIndex, length);
 				string key, value;
-				int index = 0;
 
-				if (!DigestChallenge.TryParseKeyValuePair (text, ref index, out key, out value))
+				if (!DigestChallenge.TryParseKeyValuePair (text, out key, out value))
 					throw new SaslException (MechanismName, SaslErrorCode.IncompleteChallenge, "Server response contained incomplete authentication data.");
 
-				var expected = response.ComputeHash (Credentials.Password, false);
+				if (!key.Equals ("rspauth", StringComparison.OrdinalIgnoreCase))
+					throw new SaslException (MechanismName, SaslErrorCode.InvalidChallenge, "Server response contained invalid data.");
+
+				var expected = response.ComputeHash (encoding, Credentials.Password, false);
 				if (value != expected)
 					throw new SaslException (MechanismName, SaslErrorCode.IncorrectHash, "Server response did not contain the expected hash.");
 
 				IsAuthenticated = true;
-				return new byte[0];
-			default:
-				throw new IndexOutOfRangeException ("state");
+				break;
 			}
+
+			return null;
 		}
 
 		/// <summary>
@@ -262,16 +246,16 @@ namespace MailKit.Security {
 		public string[] Realms { get; private set; }
 		public string Nonce { get; private set; }
 		public HashSet<string> Qop { get; private set; }
-		public bool Stale { get; private set; }
-		public int MaxBuf { get; private set; }
+		public bool? Stale { get; private set; }
+		public int? MaxBuf { get; private set; }
 		public string Charset { get; private set; }
 		public string Algorithm { get; private set; }
 		public HashSet<string> Ciphers { get; private set; }
 
 		DigestChallenge ()
 		{
-			Ciphers = new HashSet<string> ();
-			Qop = new HashSet<string> ();
+			Ciphers = new HashSet<string> (StringComparer.Ordinal);
+			Qop = new HashSet<string> (StringComparer.Ordinal);
 		}
 
 		static bool SkipWhiteSpace (string text, ref int index)
@@ -284,21 +268,14 @@ namespace MailKit.Security {
 			return index > startIndex;
 		}
 
-		static bool TryParseKey (string text, ref int index, out string key)
+		static string GetKey (string text, ref int index)
 		{
 			int startIndex = index;
-
-			key = null;
 
 			while (index < text.Length && !char.IsWhiteSpace (text[index]) && text[index] != '=' && text[index] != ',')
 				index++;
 
-			if (index == startIndex)
-				return false;
-
-			key = text.Substring (startIndex, index - startIndex);
-
-			return true;
+			return text.Substring (startIndex, index - startIndex);
 		}
 
 		static bool TryParseQuoted (string text, ref int index, out string value)
@@ -351,23 +328,16 @@ namespace MailKit.Security {
 			while (index < text.Length && !char.IsWhiteSpace (text[index]) && text[index] != ',')
 				index++;
 
-			if (index == startIndex)
-				return false;
-
 			value = text.Substring (startIndex, index - startIndex);
 
 			return true;
 		}
 
-		public static bool TryParseKeyValuePair (string text, ref int index, out string key, out string value)
+		static bool TryParseKeyValuePair (string text, ref int index, out string key, out string value)
 		{
 			value = null;
-			key = null;
 
-			SkipWhiteSpace (text, ref index);
-
-			if (!TryParseKey (text, ref index, out key))
-				return false;
+			key = GetKey (text, ref index);
 
 			SkipWhiteSpace (text, ref index);
 			if (index >= text.Length || text[index] != '=')
@@ -377,14 +347,33 @@ namespace MailKit.Security {
 			index++;
 
 			SkipWhiteSpace (text, ref index);
+			if (index >= text.Length)
+				return false;
 
 			return TryParseValue (text, ref index, out value);
+		}
+
+		public static bool TryParseKeyValuePair (string text, out string key, out string value)
+		{
+			int index = 0;
+
+			value = null;
+			key = null;
+
+			SkipWhiteSpace (text, ref index);
+			if (index >= text.Length || !TryParseKeyValuePair (text, ref index, out key, out value))
+				return false;
+
+			return true;
 		}
 
 		public static DigestChallenge Parse (string token)
 		{
 			var challenge = new DigestChallenge ();
 			int index = 0;
+			int maxbuf;
+
+			SkipWhiteSpace (token, ref index);
 
 			while (index < token.Length) {
 				string key, value;
@@ -397,6 +386,8 @@ namespace MailKit.Security {
 					challenge.Realms = value.Split (new [] { ',' }, StringSplitOptions.RemoveEmptyEntries);
 					break;
 				case "nonce":
+					if (challenge.Nonce != null)
+						throw new SaslException ("DIGEST-MD5", SaslErrorCode.InvalidChallenge, string.Format ("Invalid SASL challenge from the server: {0}", token));
 					challenge.Nonce = value;
 					break;
 				case "qop":
@@ -404,26 +395,39 @@ namespace MailKit.Security {
 						challenge.Qop.Add (qop.Trim ());
 					break;
 				case "stale":
+					if (challenge.Stale.HasValue)
+						throw new SaslException ("DIGEST-MD5", SaslErrorCode.InvalidChallenge, string.Format ("Invalid SASL challenge from the server: {0}", token));
 					challenge.Stale = value.ToLowerInvariant () == "true";
 					break;
 				case "maxbuf":
-					challenge.MaxBuf = int.Parse (value);
+					if (challenge.MaxBuf.HasValue || !int.TryParse (value, NumberStyles.None, CultureInfo.InvariantCulture, out maxbuf))
+						throw new SaslException ("DIGEST-MD5", SaslErrorCode.InvalidChallenge, string.Format ("Invalid SASL challenge from the server: {0}", token));
+					challenge.MaxBuf = maxbuf;
 					break;
 				case "charset":
-					challenge.Charset = value;
+					if (challenge.Charset != null || !value.Equals ("utf-8", StringComparison.OrdinalIgnoreCase))
+						throw new SaslException ("DIGEST-MD5", SaslErrorCode.InvalidChallenge, string.Format ("Invalid SASL challenge from the server: {0}", token));
+					challenge.Charset = "utf-8";
 					break;
 				case "algorithm":
+					if (challenge.Algorithm != null)
+						throw new SaslException ("DIGEST-MD5", SaslErrorCode.InvalidChallenge, string.Format ("Invalid SASL challenge from the server: {0}", token));
 					challenge.Algorithm = value;
 					break;
 				case "cipher":
+					if (challenge.Ciphers.Count > 0)
+						throw new SaslException ("DIGEST-MD5", SaslErrorCode.InvalidChallenge, string.Format ("Invalid SASL challenge from the server: {0}", token));
 					foreach (var cipher in value.Split (new [] { ',' }, StringSplitOptions.RemoveEmptyEntries))
 						challenge.Ciphers.Add (cipher.Trim ());
 					break;
 				}
 
 				SkipWhiteSpace (token, ref index);
-				if (index < token.Length && token[index] == ',')
+				if (index < token.Length && token[index] == ',') {
 					index++;
+
+					SkipWhiteSpace (token, ref index);
+				}
 			}
 
 			return challenge;
@@ -440,13 +444,13 @@ namespace MailKit.Security {
 		public string Qop { get; private set; }
 		public string DigestUri { get; private set; }
 		public string Response { get; private set; }
-		public int MaxBuf { get; private set; }
+		public int? MaxBuf { get; private set; }
 		public string Charset { get; private set; }
 		public string Algorithm { get; private set; }
 		public string Cipher { get; private set; }
 		public string AuthZid { get; private set; }
 
-		public DigestResponse (DigestChallenge challenge, string protocol, string hostName, string authzid, string userName, string password, string cnonce)
+		public DigestResponse (DigestChallenge challenge, Encoding encoding, string protocol, string hostName, string authzid, string userName, string password, string cnonce)
 		{
 			UserName = userName;
 
@@ -463,15 +467,13 @@ namespace MailKit.Security {
 			Qop = "auth";
 
 			DigestUri = string.Format ("{0}/{1}", protocol, hostName);
-
-			if (!string.IsNullOrEmpty (challenge.Charset))
-				Charset = challenge.Charset;
-
 			Algorithm = challenge.Algorithm;
+			Charset = challenge.Charset;
+			MaxBuf = challenge.MaxBuf;
 			AuthZid = authzid;
 			Cipher = null;
 
-			Response = ComputeHash (password, true);
+			Response = ComputeHash (encoding, password, true);
 		}
 
 		static string HexEncode (byte[] digest)
@@ -484,14 +486,14 @@ namespace MailKit.Security {
 			return hex.ToString ();
 		}
 
-		public string ComputeHash (string password, bool client)
+		public string ComputeHash (Encoding encoding, string password, bool client)
 		{
 			string text, a1, a2;
 			byte[] buf, digest;
 
 			// compute A1
 			text = string.Format ("{0}:{1}:{2}", UserName, Realm, password);
-			buf = Encoding.UTF8.GetBytes (text);
+			buf = encoding.GetBytes (text);
 			using (var md5 = MD5.Create ())
 				digest = md5.ComputeHash (buf);
 
@@ -500,7 +502,7 @@ namespace MailKit.Security {
 				text = string.Format (":{0}:{1}", Nonce, CNonce);
 				if (!string.IsNullOrEmpty (AuthZid))
 					text += ":" + AuthZid;
-				buf = Encoding.ASCII.GetBytes (text);
+				buf = encoding.GetBytes (text);
 				md5.TransformFinalBlock (buf, 0, buf.Length);
 				a1 = HexEncode (md5.Hash);
 			}
@@ -512,14 +514,14 @@ namespace MailKit.Security {
 			if (Qop == "auth-int" || Qop == "auth-conf")
 				text += ":00000000000000000000000000000000";
 
-			buf = Encoding.ASCII.GetBytes (text);
+			buf = encoding.GetBytes (text);
 			using (var md5 = MD5.Create ())
 				digest = md5.ComputeHash (buf);
 			a2 = HexEncode (digest);
 
 			// compute KD
 			text = string.Format ("{0}:{1}:{2:x8}:{3}:{4}:{5}", a1, Nonce, Nc, CNonce, Qop, a2);
-			buf = Encoding.ASCII.GetBytes (text);
+			buf = encoding.GetBytes (text);
 			using (var md5 = MD5.Create ())
 				digest = md5.ComputeHash (buf);
 
@@ -541,15 +543,8 @@ namespace MailKit.Security {
 			return quoted.ToString ();
 		}
 
-		public byte[] Encode ()
+		public byte[] Encode (Encoding encoding)
 		{
-			Encoding encoding;
-
-			if (!string.IsNullOrEmpty (Charset))
-				encoding = Encoding.GetEncoding (Charset);
-			else
-				encoding = Encoding.UTF8;
-
 			var builder = new StringBuilder ();
 			builder.AppendFormat ("username={0}", Quote (UserName));
 			builder.AppendFormat (",realm=\"{0}\"", Realm);
@@ -559,8 +554,8 @@ namespace MailKit.Security {
 			builder.AppendFormat (",qop=\"{0}\"", Qop);
 			builder.AppendFormat (",digest-uri=\"{0}\"", DigestUri);
 			builder.AppendFormat (",response={0}", Response);
-			if (MaxBuf > 0)
-				builder.AppendFormat (",maxbuf={0}", MaxBuf);
+			if (MaxBuf.HasValue)
+				builder.AppendFormat (CultureInfo.InvariantCulture, ",maxbuf={0}", MaxBuf.Value);
 			if (!string.IsNullOrEmpty (Charset))
 				builder.AppendFormat (",charset={0}", Charset);
 			if (!string.IsNullOrEmpty (Algorithm))

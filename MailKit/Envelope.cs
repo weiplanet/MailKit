@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,7 @@
 using System;
 using System.Text;
 using System.Linq;
+using System.Collections.Generic;
 
 using MimeKit;
 using MimeKit.Utils;
@@ -186,36 +187,44 @@ namespace MailKit {
 			else
 				builder.Append ("NIL ");
 
-			if (mailbox.Address != null) {
-				int at = mailbox.Address.LastIndexOf ('@');
+			int at = mailbox.Address.LastIndexOf ('@');
 
-				if (at >= 0) {
-					var domain = mailbox.Address.Substring (at + 1);
-					var user = mailbox.Address.Substring (0, at);
+			if (at >= 0) {
+				var domain = mailbox.Address.Substring (at + 1);
+				var user = mailbox.Address.Substring (0, at);
 
-					builder.AppendFormat ("{0} {1}", MimeUtils.Quote (user), MimeUtils.Quote (domain));
-				} else {
-					builder.AppendFormat ("{0} NIL", MimeUtils.Quote (mailbox.Address));
-				}
+				builder.AppendFormat ("{0} {1}", MimeUtils.Quote (user), MimeUtils.Quote (domain));
 			} else {
-				builder.Append ("NIL NIL");
+				builder.AppendFormat ("{0} \"localhost\"", MimeUtils.Quote (mailbox.Address));
 			}
 
 			builder.Append (')');
 		}
 
+		static void EncodeInternetAddressListAddresses (StringBuilder builder, InternetAddressList addresses)
+		{
+			foreach (var addr in addresses) {
+				var mailbox = addr as MailboxAddress;
+				var group = addr as GroupAddress;
+
+				if (mailbox != null)
+					EncodeMailbox (builder, mailbox);
+				else if (group != null)
+					EncodeGroup (builder, group);
+			}
+		}
+
+		static void EncodeGroup (StringBuilder builder, GroupAddress group)
+		{
+			builder.AppendFormat ("(NIL NIL {0} NIL)", MimeUtils.Quote (group.Name));
+			EncodeInternetAddressListAddresses (builder, group.Members);
+			builder.Append ("(NIL NIL NIL NIL)");
+		}
+
 		static void EncodeAddressList (StringBuilder builder, InternetAddressList list)
 		{
-			if (list.Count == 0) {
-				builder.Append ("NIL");
-				return;
-			}
-
 			builder.Append ('(');
-
-			foreach (var mailbox in list.Mailboxes)
-				EncodeMailbox (builder, mailbox);
-
+			EncodeInternetAddressListAddresses (builder, list);
 			builder.Append (')');
 		}
 
@@ -360,12 +369,12 @@ namespace MailKit {
 			return true;
 		}
 
-		static bool TryParse (string text, ref int index, out MailboxAddress mailbox)
+		static bool TryParse (string text, ref int index, out InternetAddress addr)
 		{
-			string name, route, user, domain, address;
+			string name, route, user, domain;
 			DomainList domains;
 
-			mailbox = null;
+			addr = null;
 
 			if (text[index] != '(')
 				return false;
@@ -392,20 +401,22 @@ namespace MailKit {
 
 			index++;
 
-			address = domain != null ? user + "@" + domain : user;
+			if (domain != null) {
+				var address = user + "@" + domain;
 
-			if (route != null && DomainList.TryParse (route, out domains))
-				mailbox = new MailboxAddress (name, domains, address);
-			else
-				mailbox = new MailboxAddress (name, address);
+				if (route != null && DomainList.TryParse (route, out domains))
+					addr = new MailboxAddress (name, domains, address);
+				else
+					addr = new MailboxAddress (name, address);
+			} else if (user != null) {
+				addr = new GroupAddress (user);
+			}
 
 			return true;
 		}
 
 		static bool TryParse (string text, ref int index, out InternetAddressList list)
 		{
-			MailboxAddress mailbox;
-
 			list = null;
 
 			while (index < text.Length && text[index] == ' ')
@@ -430,20 +441,39 @@ namespace MailKit {
 				return false;
 
 			list = new InternetAddressList ();
+			var stack = new List<InternetAddressList> ();
+			int sp = 0;
+
+			stack.Add (list);
 
 			do {
 				if (text[index] == ')')
 					break;
 
-				if (!TryParse (text, ref index, out mailbox))
+				if (!TryParse (text, ref index, out InternetAddress addr))
 					return false;
 
-				list.Add (mailbox);
+				if (addr != null) {
+					var group = addr as GroupAddress;
+
+					stack[sp].Add (addr);
+
+					if (group != null) {
+						stack.Add (group.Members);
+						sp++;
+					}
+				} else if (sp > 0) {
+					stack.RemoveAt (sp);
+					sp--;
+				}
 
 				while (index < text.Length && text[index] == ' ')
 					index++;
 			} while (index < text.Length);
 
+			// Note: technically, we should check that sp == 0 as well, since all groups should
+			// be popped off the stack, but in the interest of being liberal in what we accept,
+			// we'll ignore that.
 			if (index >= text.Length)
 				return false;
 

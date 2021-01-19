@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2017 Microsoft Corp.
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,19 +25,13 @@
 //
 
 using System;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-
-#if NETFX_CORE
-using Windows.Networking;
-using Windows.Networking.Sockets;
-using Encoding = Portable.Text.Encoding;
-#else
-using System.Net.Sockets;
-#endif
 
 using MimeKit;
 
@@ -47,6 +41,50 @@ namespace MailKit.Net.Smtp
 {
 	public partial class SmtpClient
 	{
+		/// <summary>
+		/// Asynchronously send a custom command to the SMTP server.
+		/// </summary>
+		/// <remarks>
+		/// <para>Asynchronously sends a custom command to the SMTP server.</para>
+		/// <note type="note">The command string should not include the terminating <c>\r\n</c> sequence.</note>
+		/// </remarks>
+		/// <returns>The command response.</returns>
+		/// <param name="command">The command.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="command"/> is <c>null</c>.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="SmtpClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="SmtpClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation has been canceled.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="SmtpCommandException">
+		/// The SMTP command failed.
+		/// </exception>
+		/// <exception cref="SmtpProtocolException">
+		/// An SMTP protocol exception occurred.
+		/// </exception>
+		protected Task<SmtpResponse> SendCommandAsync (string command, CancellationToken cancellationToken = default (CancellationToken))
+		{
+			if (command == null)
+				throw new ArgumentNullException (nameof (command));
+
+			CheckDisposed ();
+
+			if (!IsConnected)
+				throw new ServiceNotConnectedException ("The SmtpClient must be connected before you can send commands.");
+
+			return SendCommandAsync (command, true, cancellationToken);
+		}
+
 		/// <summary>
 		/// Asynchronously authenticate using the specified SASL mechanism.
 		/// </summary>
@@ -230,16 +268,11 @@ namespace MailKit.Net.Smtp
 			return ConnectAsync (host, port, options, true, cancellationToken);
 		}
 
-#if !NETFX_CORE
 		/// <summary>
 		/// Asynchronously establish a connection to the specified SMTP or SMTP/S server using the provided socket.
 		/// </summary>
 		/// <remarks>
-		/// <para>Establishes a connection to the specified SMTP or SMTP/S server.</para>
-		/// <para>If the <paramref name="port"/> has a value of <c>0</c>, then the
-		/// <paramref name="options"/> parameter is used to determine the default port to
-		/// connect to. The default port used with <see cref="SecureSocketOptions.SslOnConnect"/>
-		/// is <c>465</c>. All other values will use a default port of <c>25</c>.</para>
+		/// <para>Establishes a connection to the specified SMTP or SMTP/S server using the provided socket.</para>
 		/// <para>If the <paramref name="options"/> has a value of
 		/// <see cref="SecureSocketOptions.Auto"/>, then the <paramref name="port"/> is used
 		/// to determine the default security options. If the <paramref name="port"/> has a value
@@ -249,13 +282,10 @@ namespace MailKit.Net.Smtp
 		/// <para>Once a connection is established, properties such as
 		/// <see cref="AuthenticationMechanisms"/> and <see cref="Capabilities"/> will be
 		/// populated.</para>
-		/// <note type="note">The connection established by any of the
-		/// <a href="Overload_MailKit_Net_Smtp_SmtpClient_ConnectAsync.htm">Connect</a>
-		/// methods may be re-used if an application wishes to send multiple messages
-		/// to the same SMTP server. Since connecting and authenticating can be expensive
-		/// operations, re-using a connection can significantly improve performance when
-		/// sending a large number of messages to the same SMTP server over a short
-		/// period of time./</note>
+		/// <note type="info">With the exception of using the <paramref name="port"/> to determine the
+		/// default <see cref="SecureSocketOptions"/> to use when the <paramref name="options"/> value
+		/// is <see cref="SecureSocketOptions.Auto"/>, the <paramref name="host"/> and
+		/// <paramref name="port"/> parameters are only used for logging purposes.</note>
 		/// </remarks>
 		/// <returns>An asynchronous task context.</returns>
 		/// <param name="socket">The socket to use for the connection.</param>
@@ -274,6 +304,73 @@ namespace MailKit.Net.Smtp
 		/// <exception cref="System.ArgumentException">
 		/// <para><paramref name="socket"/> is not connected.</para>
 		/// <para>-or-</para>
+		/// <para>The <paramref name="host"/> is a zero-length string.</para>
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="SmtpClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="SmtpClient"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.NotSupportedException">
+		/// <paramref name="options"/> was set to
+		/// <see cref="MailKit.Security.SecureSocketOptions.StartTls"/>
+		/// and the SMTP server does not support the STARTTLS extension.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled.
+		/// </exception>
+		/// <exception cref="SslHandshakeException">
+		/// An error occurred during the SSL/TLS negotiations.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="SmtpCommandException">
+		/// An SMTP command failed.
+		/// </exception>
+		/// <exception cref="SmtpProtocolException">
+		/// An SMTP protocol error occurred.
+		/// </exception>
+		public override Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		{
+			return ConnectAsync (socket, host, port, options, true, cancellationToken);
+		}
+
+		/// <summary>
+		/// Asynchronously establish a connection to the specified SMTP or SMTP/S server using the provided socket.
+		/// </summary>
+		/// <remarks>
+		/// <para>Establishes a connection to the specified SMTP or SMTP/S server using the provided socket.</para>
+		/// <para>If the <paramref name="options"/> has a value of
+		/// <see cref="SecureSocketOptions.Auto"/>, then the <paramref name="port"/> is used
+		/// to determine the default security options. If the <paramref name="port"/> has a value
+		/// of <c>465</c>, then the default options used will be
+		/// <see cref="SecureSocketOptions.SslOnConnect"/>. All other values will use
+		/// <see cref="SecureSocketOptions.StartTlsWhenAvailable"/>.</para>
+		/// <para>Once a connection is established, properties such as
+		/// <see cref="AuthenticationMechanisms"/> and <see cref="Capabilities"/> will be
+		/// populated.</para>
+		/// <note type="info">With the exception of using the <paramref name="port"/> to determine the
+		/// default <see cref="SecureSocketOptions"/> to use when the <paramref name="options"/> value
+		/// is <see cref="SecureSocketOptions.Auto"/>, the <paramref name="host"/> and
+		/// <paramref name="port"/> parameters are only used for logging purposes.</note>
+		/// </remarks>
+		/// <returns>An asynchronous task context.</returns>
+		/// <param name="stream">The stream to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
 		/// The <paramref name="host"/> is a zero-length string.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
@@ -302,11 +399,10 @@ namespace MailKit.Net.Smtp
 		/// <exception cref="SmtpProtocolException">
 		/// An SMTP protocol error occurred.
 		/// </exception>
-		public Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return ConnectAsync (socket, host, port, options, true, cancellationToken);
+			return ConnectAsync (stream, host, port, options, true, cancellationToken);
 		}
-#endif
 
 		/// <summary>
 		/// Asynchronously disconnect the service.

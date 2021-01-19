@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -45,7 +45,7 @@ namespace MailKit.Net.Imap {
 		/// <param name="encodedName">The encoded name.</param>
 		/// <param name="attributes">The attributes.</param>
 		/// <param name="delim">The directory separator.</param>
-		internal ImapFolderConstructorArgs (ImapEngine engine, string encodedName, FolderAttributes attributes, char delim)
+		internal ImapFolderConstructorArgs (ImapEngine engine, string encodedName, FolderAttributes attributes, char delim) : this ()
 		{
 			FullName = engine.DecodeMailboxName (encodedName);
 			Name = GetBaseName (FullName, delim);

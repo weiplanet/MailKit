@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -45,7 +45,7 @@ namespace MailKit {
 		/// <param name="index">The message index.</param>
 		internal MessageFlagsChangedEventArgs (int index) : base (index)
 		{
-			UserFlags = new HashSet<string> ();
+			Keywords = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
 		}
 
 		/// <summary>
@@ -58,7 +58,7 @@ namespace MailKit {
 		/// <param name="flags">The message flags.</param>
 		public MessageFlagsChangedEventArgs (int index, MessageFlags flags) : base (index)
 		{
-			UserFlags = new HashSet<string> ();
+			Keywords = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
 			Flags = flags;
 		}
 
@@ -70,19 +70,19 @@ namespace MailKit {
 		/// </remarks>
 		/// <param name="index">The message index.</param>
 		/// <param name="flags">The message flags.</param>
-		/// <param name="userFlags">The user-defined message flags.</param>
+		/// <param name="keywords">The user-defined message flags.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="userFlags"/> is <c>null</c>.
+		/// <paramref name="keywords"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
 		/// </exception>
-		public MessageFlagsChangedEventArgs (int index, MessageFlags flags, HashSet<string> userFlags) : base (index)
+		public MessageFlagsChangedEventArgs (int index, MessageFlags flags, HashSet<string> keywords) : base (index)
 		{
-			if (userFlags == null)
-				throw new ArgumentNullException (nameof (userFlags));
+			if (keywords == null)
+				throw new ArgumentNullException (nameof (keywords));
 
-			UserFlags = userFlags;
+			Keywords = keywords;
 			Flags = flags;
 		}
 
@@ -100,7 +100,7 @@ namespace MailKit {
 		/// </exception>
 		public MessageFlagsChangedEventArgs (int index, MessageFlags flags, ulong modseq) : base (index)
 		{
-			UserFlags = new HashSet<string> ();
+			Keywords = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
 			ModSeq = modseq;
 			Flags = flags;
 		}
@@ -113,20 +113,20 @@ namespace MailKit {
 		/// </remarks>
 		/// <param name="index">The message index.</param>
 		/// <param name="flags">The message flags.</param>
-		/// <param name="userFlags">The user-defined message flags.</param>
+		/// <param name="keywords">The user-defined message flags.</param>
 		/// <param name="modseq">The modification sequence value.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="userFlags"/> is <c>null</c>.
+		/// <paramref name="keywords"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
 		/// </exception>
-		public MessageFlagsChangedEventArgs (int index, MessageFlags flags, HashSet<string> userFlags, ulong modseq) : base (index)
+		public MessageFlagsChangedEventArgs (int index, MessageFlags flags, HashSet<string> keywords, ulong modseq) : base (index)
 		{
-			if (userFlags == null)
-				throw new ArgumentNullException (nameof (userFlags));
+			if (keywords == null)
+				throw new ArgumentNullException (nameof (keywords));
 
-			UserFlags = userFlags;
+			Keywords = keywords;
 			ModSeq = modseq;
 			Flags = flags;
 		}
@@ -143,10 +143,9 @@ namespace MailKit {
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
 		/// </exception>
-		public MessageFlagsChangedEventArgs (int index, UniqueId uid, MessageFlags flags) : base (index)
+		public MessageFlagsChangedEventArgs (int index, UniqueId uid, MessageFlags flags) : base (index, uid)
 		{
-			UserFlags = new HashSet<string> ();
-			UniqueId = uid;
+			Keywords = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
 			Flags = flags;
 		}
 
@@ -159,20 +158,19 @@ namespace MailKit {
 		/// <param name="index">The message index.</param>
 		/// <param name="uid">The unique id of the message.</param>
 		/// <param name="flags">The message flags.</param>
-		/// <param name="userFlags">The user-defined message flags.</param>
+		/// <param name="keywords">The user-defined message flags.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="userFlags"/> is <c>null</c>.
+		/// <paramref name="keywords"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
 		/// </exception>
-		public MessageFlagsChangedEventArgs (int index, UniqueId uid, MessageFlags flags, HashSet<string> userFlags) : base (index)
+		public MessageFlagsChangedEventArgs (int index, UniqueId uid, MessageFlags flags, HashSet<string> keywords) : base (index, uid)
 		{
-			if (userFlags == null)
-				throw new ArgumentNullException (nameof (userFlags));
+			if (keywords == null)
+				throw new ArgumentNullException (nameof (keywords));
 
-			UserFlags = userFlags;
-			UniqueId = uid;
+			Keywords = keywords;
 			Flags = flags;
 		}
 
@@ -189,11 +187,10 @@ namespace MailKit {
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
 		/// </exception>
-		public MessageFlagsChangedEventArgs (int index, UniqueId uid, MessageFlags flags, ulong modseq) : base (index)
+		public MessageFlagsChangedEventArgs (int index, UniqueId uid, MessageFlags flags, ulong modseq) : base (index, uid)
 		{
-			UserFlags = new HashSet<string> ();
+			Keywords = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
 			ModSeq = modseq;
-			UniqueId = uid;
 			Flags = flags;
 		}
 
@@ -206,34 +203,22 @@ namespace MailKit {
 		/// <param name="index">The message index.</param>
 		/// <param name="uid">The unique id of the message.</param>
 		/// <param name="flags">The message flags.</param>
-		/// <param name="userFlags">The user-defined message flags.</param>
+		/// <param name="keywords">The user-defined message flags.</param>
 		/// <param name="modseq">The modification sequence value.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="userFlags"/> is <c>null</c>.
+		/// <paramref name="keywords"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
 		/// </exception>
-		public MessageFlagsChangedEventArgs (int index, UniqueId uid, MessageFlags flags, HashSet<string> userFlags, ulong modseq) : base (index)
+		public MessageFlagsChangedEventArgs (int index, UniqueId uid, MessageFlags flags, HashSet<string> keywords, ulong modseq) : base (index, uid)
 		{
-			if (userFlags == null)
-				throw new ArgumentNullException (nameof (userFlags));
+			if (keywords == null)
+				throw new ArgumentNullException (nameof (keywords));
 
-			UserFlags = userFlags;
+			Keywords = keywords;
 			ModSeq = modseq;
-			UniqueId = uid;
 			Flags = flags;
-		}
-
-		/// <summary>
-		/// Gets the unique ID of the message that changed, if available.
-		/// </summary>
-		/// <remarks>
-		/// Gets the unique ID of the message that changed, if available.
-		/// </remarks>
-		/// <value>The unique ID of the message.</value>
-		public UniqueId? UniqueId {
-			get; internal set;
 		}
 
 		/// <summary>
@@ -254,8 +239,20 @@ namespace MailKit {
 		/// Gets the updated user-defined message flags.
 		/// </remarks>
 		/// <value>The updated user-defined message flags.</value>
+		public HashSet<string> Keywords {
+			get; private set;
+		}
+
+		/// <summary>
+		/// Gets the updated user-defined message flags.
+		/// </summary>
+		/// <remarks>
+		/// Gets the updated user-defined message flags.
+		/// </remarks>
+		/// <value>The updated user-defined message flags.</value>
+		[Obsolete ("Use Keywords instead.")]
 		public HashSet<string> UserFlags {
-			get; internal set;
+			get { return Keywords; }
 		}
 
 		/// <summary>

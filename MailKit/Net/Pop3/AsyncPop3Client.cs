@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2017 Microsoft Corp.
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -29,16 +29,9 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-
-#if NETFX_CORE
-using Windows.Networking;
-using Windows.Networking.Sockets;
-using Encoding = Portable.Text.Encoding;
-#else
-using System.Net.Sockets;
-#endif
 
 using MimeKit;
 
@@ -227,17 +220,12 @@ namespace MailKit.Net.Pop3
 			return ConnectAsync (host, port, options, true, cancellationToken);
 		}
 
-#if !NETFX_CORE
 		/// <summary>
 		/// Asynchronously establish a connection to the specified POP3 or POP3/S server using the provided socket.
 		/// </summary>
 		/// <remarks>
 		/// <para>Establishes a connection to the specified POP3 or POP3/S server using
 		/// the provided socket.</para>
-		/// <para>If the <paramref name="port"/> has a value of <c>0</c>, then the
-		/// <paramref name="options"/> parameter is used to determine the default port to
-		/// connect to. The default port used with <see cref="SecureSocketOptions.SslOnConnect"/>
-		/// is <c>995</c>. All other values will use a default port of <c>110</c>.</para>
 		/// <para>If the <paramref name="options"/> has a value of
 		/// <see cref="SecureSocketOptions.Auto"/>, then the <paramref name="port"/> is used
 		/// to determine the default security options. If the <paramref name="port"/> has a value
@@ -247,6 +235,10 @@ namespace MailKit.Net.Pop3
 		/// <para>Once a connection is established, properties such as
 		/// <see cref="AuthenticationMechanisms"/> and <see cref="Capabilities"/> will be
 		/// populated.</para>
+		/// <note type="info">With the exception of using the <paramref name="port"/> to determine the
+		/// default <see cref="SecureSocketOptions"/> to use when the <paramref name="options"/> value
+		/// is <see cref="SecureSocketOptions.Auto"/>, the <paramref name="host"/> and
+		/// <paramref name="port"/> parameters are only used for logging purposes.</note>
 		/// </remarks>
 		/// <returns>An asynchronous task context.</returns>
 		/// <param name="socket">The socket to use for the connection.</param>
@@ -265,6 +257,74 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="System.ArgumentException">
 		/// <para><paramref name="socket"/> is not connected.</para>
 		/// <para>-or-</para>
+		/// <para>The <paramref name="host"/> is a zero-length string.</para>
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="Pop3Client"/> has been disposed.
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="Pop3Client"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.NotSupportedException">
+		/// <paramref name="options"/> was set to
+		/// <see cref="MailKit.Security.SecureSocketOptions.StartTls"/>
+		/// and the POP3 server does not support the STLS extension.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="SslHandshakeException">
+		/// An error occurred during the SSL/TLS negotiations.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="Pop3CommandException">
+		/// A POP3 command failed.
+		/// </exception>
+		/// <exception cref="Pop3ProtocolException">
+		/// A POP3 protocol error occurred.
+		/// </exception>
+		public override Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		{
+			return ConnectAsync (socket, host, port, options, true, cancellationToken); 
+		}
+
+		/// <summary>
+		/// Asynchronously establish a connection to the specified POP3 or POP3/S server using the provided stream.
+		/// </summary>
+		/// <remarks>
+		/// <para>Establishes a connection to the specified POP3 or POP3/S server using
+		/// the provided stream.</para>
+		/// <para>If the <paramref name="options"/> has a value of
+		/// <see cref="SecureSocketOptions.Auto"/>, then the <paramref name="port"/> is used
+		/// to determine the default security options. If the <paramref name="port"/> has a value
+		/// of <c>995</c>, then the default options used will be
+		/// <see cref="SecureSocketOptions.SslOnConnect"/>. All other values will use
+		/// <see cref="SecureSocketOptions.StartTlsWhenAvailable"/>.</para>
+		/// <para>Once a connection is established, properties such as
+		/// <see cref="AuthenticationMechanisms"/> and <see cref="Capabilities"/> will be
+		/// populated.</para>
+		/// <note type="info">With the exception of using the <paramref name="port"/> to determine the
+		/// default <see cref="SecureSocketOptions"/> to use when the <paramref name="options"/> value
+		/// is <see cref="SecureSocketOptions.Auto"/>, the <paramref name="host"/> and
+		/// <paramref name="port"/> parameters are only used for logging purposes.</note>
+		/// </remarks>
+		/// <returns>An asynchronous task context.</returns>
+		/// <param name="stream">The socket to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
 		/// The <paramref name="host"/> is a zero-length string.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
@@ -293,11 +353,10 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			return ConnectAsync (socket, host, port, options, true, cancellationToken); 
+			return ConnectAsync (stream, host, port, options, true, cancellationToken);
 		}
-#endif
 
 		/// <summary>
 		/// Asynchronously disconnect the service.
@@ -317,6 +376,46 @@ namespace MailKit.Net.Pop3
 		public override Task DisconnectAsync (bool quit, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			return DisconnectAsync (quit, true, cancellationToken);
+		}
+
+		/// <summary>
+		/// Asynchronously get the message count.
+		/// </summary>
+		/// <remarks>
+		/// Asynchronously gets the message count.
+		/// </remarks>
+		/// <returns>The message count.</returns>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="Pop3Client"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="Pop3Client"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="Pop3Client"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="Pop3CommandException">
+		/// The POP3 command failed.
+		/// </exception>
+		/// <exception cref="Pop3ProtocolException">
+		/// A POP3 protocol error occurred.
+		/// </exception>
+		public override async Task<int> GetMessageCountAsync (CancellationToken cancellationToken = default (CancellationToken))
+		{
+			CheckDisposed ();
+			CheckConnected ();
+			CheckAuthenticated ();
+
+			await UpdateMessageCountAsync (true, cancellationToken).ConfigureAwait (false);
+
+			return Count;
 		}
 
 		/// <summary>
@@ -589,16 +688,7 @@ namespace MailKit.Net.Pop3
 		/// </exception>
 		public override Task<int> GetMessageSizeAsync (int index, CancellationToken cancellationToken = default (CancellationToken))
 		{
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
-
-			if (index < 0 || index >= total)
-				throw new ArgumentOutOfRangeException (nameof (index));
-
-			var ctx = new MessageSizeContext (engine);
-
-			return ctx.GetSizeAsync (index + 1, true, cancellationToken);
+			return GetMessageSizeAsync (index, true, cancellationToken);
 		}
 
 		/// <summary>
@@ -699,9 +789,7 @@ namespace MailKit.Net.Pop3
 		/// <paramref name="indexes"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="indexes"/> are invalid.</para>
-		/// <para>-or-</para>
-		/// <para>No indexes were specified.</para>
+		/// One or more of the <paramref name="indexes"/> are invalid.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="Pop3Client"/> has been disposed.
@@ -729,15 +817,15 @@ namespace MailKit.Net.Pop3
 		/// </exception>
 		public override Task<IList<HeaderList>> GetMessageHeadersAsync (IList<int> indexes, CancellationToken cancellationToken = default (CancellationToken))
 		{
+			CheckDisposed ();
+			CheckConnected ();
+			CheckAuthenticated ();
+
 			if (indexes == null)
 				throw new ArgumentNullException (nameof (indexes));
 
 			if (indexes.Count == 0)
-				throw new ArgumentException ("No indexes specified.", nameof (indexes));
-
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
+				return Task.FromResult ((IList<HeaderList>) new HeaderList[0]);
 
 			var seqids = new int[indexes.Count];
 
@@ -797,15 +885,15 @@ namespace MailKit.Net.Pop3
 		/// </exception>
 		public override Task<IList<HeaderList>> GetMessageHeadersAsync (int startIndex, int count, CancellationToken cancellationToken = default (CancellationToken))
 		{
+			CheckDisposed ();
+			CheckConnected ();
+			CheckAuthenticated ();
+
 			if (startIndex < 0 || startIndex >= total)
 				throw new ArgumentOutOfRangeException (nameof (startIndex));
 
 			if (count < 0 || count > (total - startIndex))
 				throw new ArgumentOutOfRangeException (nameof (count));
-
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
 
 			if (count == 0)
 				return Task.FromResult ((IList<HeaderList>) new HeaderList[0]);
@@ -889,9 +977,7 @@ namespace MailKit.Net.Pop3
 		/// <paramref name="indexes"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="indexes"/> are invalid.</para>
-		/// <para>-or-</para>
-		/// <para>No indexes were specified.</para>
+		/// One or more of the <paramref name="indexes"/> are invalid.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="Pop3Client"/> has been disposed.
@@ -919,15 +1005,15 @@ namespace MailKit.Net.Pop3
 		/// </exception>
 		public override Task<IList<MimeMessage>> GetMessagesAsync (IList<int> indexes, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
+			CheckDisposed ();
+			CheckConnected ();
+			CheckAuthenticated ();
+
 			if (indexes == null)
 				throw new ArgumentNullException (nameof (indexes));
 
 			if (indexes.Count == 0)
-				throw new ArgumentException ("No indexes specified.", nameof (indexes));
-
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
+				return Task.FromResult ((IList<MimeMessage>) new MimeMessage[0]);
 
 			var seqids = new int[indexes.Count];
 
@@ -991,15 +1077,15 @@ namespace MailKit.Net.Pop3
 		/// </exception>
 		public override Task<IList<MimeMessage>> GetMessagesAsync (int startIndex, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
 		{
+			CheckDisposed ();
+			CheckConnected ();
+			CheckAuthenticated ();
+
 			if (startIndex < 0 || startIndex >= total)
 				throw new ArgumentOutOfRangeException (nameof (startIndex));
 
 			if (count < 0 || count > (total - startIndex))
 				throw new ArgumentOutOfRangeException (nameof (count));
-
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
 
 			if (count == 0)
 				return Task.FromResult ((IList<MimeMessage>) new MimeMessage[0]);
@@ -1082,9 +1168,7 @@ namespace MailKit.Net.Pop3
 		/// <paramref name="indexes"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="indexes"/> are invalid.</para>
-		/// <para>-or-</para>
-		/// <para>No indexes were specified.</para>
+		/// One or more of the <paramref name="indexes"/> are invalid.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="Pop3Client"/> has been disposed.
@@ -1120,7 +1204,7 @@ namespace MailKit.Net.Pop3
 				throw new ArgumentNullException (nameof (indexes));
 
 			if (indexes.Count == 0)
-				throw new ArgumentException ("No indexes specified.", nameof (indexes));
+				return Task.FromResult ((IList<Stream>) new Stream[0]);
 
 			var seqids = new int[indexes.Count];
 
@@ -1263,9 +1347,7 @@ namespace MailKit.Net.Pop3
 		/// <paramref name="indexes"/> is <c>null</c>.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="indexes"/> are invalid.</para>
-		/// <para>-or-</para>
-		/// <para>No indexes were specified.</para>
+		/// One or more of the <paramref name="indexes"/> are invalid.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="Pop3Client"/> has been disposed.
@@ -1383,6 +1465,7 @@ namespace MailKit.Net.Pop3
 		/// is cleanly disconnected
 		/// (see <see cref="Pop3Client.Disconnect(bool, CancellationToken)"/>).
 		/// </remarks>
+		/// <returns>An awaitable task.</returns>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="Pop3Client"/> has been disposed.

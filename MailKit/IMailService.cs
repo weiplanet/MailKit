@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2018 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2020 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,18 +25,18 @@
 //
 
 using System;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
+using System.Net.Sockets;
+using System.Net.Security;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-
-#if !NETFX_CORE
-using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
-#else
-using Encoding = Portable.Text.Encoding;
-#endif
+using SslProtocols = System.Security.Authentication.SslProtocols;
+
+using MailKit.Net.Proxy;
 
 using MailKit.Security;
 
@@ -45,8 +45,9 @@ namespace MailKit {
 	/// An interface for message services such as SMTP, POP3, or IMAP.
 	/// </summary>
 	/// <remarks>
-	/// Implemented by <see cref="MailKit.Net.Smtp.SmtpClient"/>
-	/// and <see cref="MailKit.Net.Pop3.Pop3Client"/>.
+	/// Implemented by <see cref="MailKit.Net.Imap.ImapClient"/>,
+	/// <see cref="MailKit.Net.Pop3.Pop3Client"/> and
+	/// <see cref="MailKit.Net.Smtp.SmtpClient"/>.
 	/// </remarks>
 	public interface IMailService : IDisposable
 	{
@@ -59,14 +60,28 @@ namespace MailKit {
 		/// <value>The sync root.</value>
 		object SyncRoot { get; }
 
-#if !NETFX_CORE
+		/// <summary>
+		/// Gets or sets the SSL and TLS protocol versions that the client is allowed to use.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets or sets the SSL and TLS protocol versions that the client is allowed to use.</para>
+		/// <para>By default, MailKit initializes this value to support only TLS v1.0 and greater and
+		/// does not support any version of SSL due to those protocols no longer being considered
+		/// secure.</para>
+		/// <para>This property should be set before calling any of the
+		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> methods.</para>
+		/// </remarks>
+		/// <value>The SSL and TLS protocol versions that are supported.</value>
+		SslProtocols SslProtocols { get; set; }
+
 		/// <summary>
 		/// Get or set the client SSL certificates.
 		/// </summary>
 		/// <remarks>
 		/// <para>Some servers may require the client SSL certificates in order
 		/// to allow the user to connect.</para>
-		/// <para>This property should be set before calling <see cref="Connect(string,int,SecureSocketOptions,CancellationToken)"/>.</para>
+		/// <para>This property should be set before calling any of the
+		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> methods.</para>
 		/// </remarks>
 		/// <value>The client SSL certificates.</value>
 		X509CertificateCollection ClientCertificates { get; set; }
@@ -75,9 +90,18 @@ namespace MailKit {
 		/// Get or set whether connecting via SSL/TLS should check certificate revocation.
 		/// </summary>
 		/// <remarks>
-		/// Gets or sets whether connecting via SSL/TLS should check certificate revocation.
+		/// <para>Gets or sets whether connecting via SSL/TLS should check certificate revocation.</para>
+		/// <para>Normally, the value of this property should be set to <c>true</c> (the default) for security
+		/// reasons, but there are times when it may be necessary to set it to <c>false</c>.</para>
+		/// <para>For example, most Certificate Authorities are probably pretty good at keeping their CRL and/or
+		/// OCSP servers up 24/7, but occasionally they do go down or are otherwise unreachable due to other
+		/// network problems between the client and the Certificate Authority. When this happens, it becomes
+		/// impossible to check the revocation status of one or more of the certificates in the chain
+		/// resulting in an <see cref="SslHandshakeException"/> being thrown in the
+		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> method. If this becomes a problem,
+		/// it may become desirable to set <see cref="CheckCertificateRevocation"/> to <c>false</c>.</para>
 		/// </remarks>
-		/// <value><c>true</c> certificate revocation should be checked; otherwise, <c>false</c>.</value>
+		/// <value><c>true</c> if certificate revocation should be checked; otherwise, <c>false</c>.</value>
 		bool CheckCertificateRevocation { get; set; }
 
 		/// <summary>
@@ -85,30 +109,40 @@ namespace MailKit {
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets or sets a callback function to validate the server certificate.</para>
-		/// <para>This property should be set before calling <see cref="Connect(string,int,SecureSocketOptions,CancellationToken)"/>.</para>
+		/// <para>This property should be set before calling any of the
+		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> methods.</para>
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\InvalidSslCertificate.cs" region="Simple"/>
+		/// <code language="c#" source="Examples\SslCertificateValidation.cs"/>
 		/// </example>
 		/// <value>The server certificate validation callback function.</value>
 		RemoteCertificateValidationCallback ServerCertificateValidationCallback { get; set; }
 
 		/// <summary>
-		/// Get or set the local IP end point to use when connecting to the remote host.
+		/// Get or set the local IP end point to use when connecting to a remote host.
 		/// </summary>
 		/// <remarks>
-		/// Gets or sets the local IP end point to use when connecting to the remote host.
+		/// Gets or sets the local IP end point to use when connecting to a remote host.
 		/// </remarks>
 		/// <value>The local IP end point or <c>null</c> to use the default end point.</value>
 		IPEndPoint LocalEndPoint { get; set; }
-#endif
+
+		/// <summary>
+		/// Get or set the proxy client to use when connecting to a remote host.
+		/// </summary>
+		/// <remarks>
+		/// Gets or sets the proxy client to use when connecting to a remote host via any of the
+		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> methods.
+		/// </remarks>
+		/// <value>The proxy client.</value>
+		IProxyClient ProxyClient { get; set; }
 
 		/// <summary>
 		/// Get the authentication mechanisms supported by the message service.
 		/// </summary>
 		/// <remarks>
 		/// The authentication mechanisms are queried durring the
-		/// <see cref="Connect(string,int,SecureSocketOptions,CancellationToken)"/> method.
+		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> method.
 		/// </remarks>
 		/// <value>The supported authentication mechanisms.</value>
 		HashSet<string> AuthenticationMechanisms { get; }
@@ -178,6 +212,9 @@ namespace MailKit {
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
 		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// The <paramref name="host"/> is a zero-length string.
+		/// </exception>
 		/// <exception cref="System.InvalidOperationException">
 		/// The <see cref="IMailService"/> is already connected.
 		/// </exception>
@@ -214,6 +251,9 @@ namespace MailKit {
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
 		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// The <paramref name="host"/> is a zero-length string.
+		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="IMailService"/> has been disposed.
 		/// </exception>
@@ -248,6 +288,9 @@ namespace MailKit {
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// The <paramref name="host"/> is a zero-length string.
 		/// </exception>
 		/// <exception cref="System.InvalidOperationException">
 		/// The <see cref="IMailService"/> is already connected.
@@ -285,6 +328,9 @@ namespace MailKit {
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
 		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// The <paramref name="host"/> is a zero-length string.
+		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="IMailService"/> has been disposed.
 		/// </exception>
@@ -301,6 +347,176 @@ namespace MailKit {
 		/// A protocol error occurred.
 		/// </exception>
 		Task ConnectAsync (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+
+		/// <summary>
+		/// Establish a connection to the specified mail server using the provided socket.
+		/// </summary>
+		/// <remarks>
+		/// <para>Establish a connection to the specified mail server using the provided socket.</para>
+		/// <para>If a successful connection is made, the <see cref="AuthenticationMechanisms"/>
+		/// property will be populated.</para>
+		/// </remarks>
+		/// <param name="socket">The socket to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="socket"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <para><paramref name="socket"/> is not connected.</para>
+		/// <para>-or-</para>
+		/// <para>The <paramref name="host"/> is a zero-length string.</para>
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="IMailService"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="CommandException">
+		/// The command was rejected by the mail server.
+		/// </exception>
+		/// <exception cref="ProtocolException">
+		/// The server responded with an unexpected token.
+		/// </exception>
+		void Connect (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+
+		/// <summary>
+		/// Asynchronously establish a connection to the specified mail server using the provided socket.
+		/// </summary>
+		/// <remarks>
+		/// <para>Asynchronously establishes a connection to the specified mail server using the provided socket.</para>
+		/// <para>If a successful connection is made, the <see cref="AuthenticationMechanisms"/>
+		/// property will be populated.</para>
+		/// </remarks>
+		/// <returns>An asynchronous task context.</returns>
+		/// <param name="socket">The socket to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="socket"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <para><paramref name="socket"/> is not connected.</para>
+		/// <para>-or-</para>
+		/// <para>The <paramref name="host"/> is a zero-length string.</para>
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="IMailService"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="CommandException">
+		/// The command was rejected by the mail server.
+		/// </exception>
+		/// <exception cref="ProtocolException">
+		/// The server responded with an unexpected token.
+		/// </exception>
+		Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+
+		/// <summary>
+		/// Establish a connection to the specified mail server using the provided stream.
+		/// </summary>
+		/// <remarks>
+		/// <para>Establish a connection to the specified mail server using the provided stream.</para>
+		/// <para>If a successful connection is made, the <see cref="AuthenticationMechanisms"/>
+		/// property will be populated.</para>
+		/// </remarks>
+		/// <param name="stream">The stream to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// The <paramref name="host"/> is a zero-length string.
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="IMailService"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="CommandException">
+		/// The command was rejected by the mail server.
+		/// </exception>
+		/// <exception cref="ProtocolException">
+		/// The server responded with an unexpected token.
+		/// </exception>
+		void Connect (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+
+		/// <summary>
+		/// Asynchronously establish a connection to the specified mail server using the provided stream.
+		/// </summary>
+		/// <remarks>
+		/// <para>Asynchronously establishes a connection to the specified mail server using the provided stream.</para>
+		/// <para>If a successful connection is made, the <see cref="AuthenticationMechanisms"/>
+		/// property will be populated.</para>
+		/// </remarks>
+		/// <returns>An asynchronous task context.</returns>
+		/// <param name="stream">The stream to use for the connection.</param>
+		/// <param name="host">The host name to connect to.</param>
+		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
+		/// <param name="options">The secure socket options to when connecting.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// The <paramref name="host"/> is a zero-length string.
+		/// </exception>
+		/// <exception cref="System.InvalidOperationException">
+		/// The <see cref="IMailService"/> is already connected.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="CommandException">
+		/// The command was rejected by the mail server.
+		/// </exception>
+		/// <exception cref="ProtocolException">
+		/// The server responded with an unexpected token.
+		/// </exception>
+		Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
 
 		/// <summary>
 		/// Authenticate using the supplied credentials.
@@ -880,7 +1096,7 @@ namespace MailKit {
 		/// The <see cref="Connected"/> event is raised when the client
 		/// successfully connects to the mail server.
 		/// </remarks>
-		event EventHandler<EventArgs> Connected;
+		event EventHandler<ConnectedEventArgs> Connected;
 
 		/// <summary>
 		/// Occurs when the client has been disconnected.
@@ -889,7 +1105,7 @@ namespace MailKit {
 		/// The <see cref="Disconnected"/> event is raised whenever the client
 		/// has been disconnected.
 		/// </remarks>
-		event EventHandler<EventArgs> Disconnected;
+		event EventHandler<DisconnectedEventArgs> Disconnected;
 
 		/// <summary>
 		/// Occurs when the client has been successfully authenticated.
